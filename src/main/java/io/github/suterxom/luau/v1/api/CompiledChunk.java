@@ -7,6 +7,7 @@ import io.github.suterxom.luau.internal.jni.NativeValueCodec;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionMetrics;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
+import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
@@ -50,35 +51,53 @@ public final class CompiledChunk implements AutoCloseable {
               budget.maxRuntimeNanos(),
               budget.maxInterruptChecks(),
               DEFAULT_MAX_MEMORY_BYTES);
-      ExecutionMetrics metrics =
-          new ExecutionMetrics(
-              Duration.ofNanos(result.elapsedNanos()),
-              result.interruptChecks(),
-              result.currentMemoryBytes(),
-              result.peakMemoryBytes());
-      String message =
-          result.messageUtf8() == null
-              ? ""
-              : new String(result.messageUtf8(), StandardCharsets.UTF_8);
-      return switch (result.status()) {
-        case 0 ->
-            new ExecutionResult.Completed(
-                NativeValueCodec.fromNativeValues(result.values()), metrics);
-        case 1 -> new ExecutionResult.RuntimeFailed(message, metrics);
-        case 2 ->
-            new ExecutionResult.LimitExceeded(
-                ExecutionResult.LimitExceeded.Kind.RUNTIME, message, metrics);
-        case 3 ->
-            new ExecutionResult.LimitExceeded(
-                ExecutionResult.LimitExceeded.Kind.INTERRUPT_CHECKS, message, metrics);
-        case 4 ->
-            new ExecutionResult.LimitExceeded(
-                ExecutionResult.LimitExceeded.Kind.MEMORY, message, metrics);
-        default -> throw new LinkageError("Unknown native execution status: " + result.status());
-      };
+      return decodeExecutionResult(result);
     } catch (NativeLuauException exception) {
       throw new IllegalStateException("Native Luau execution boundary failed", exception);
     }
+  }
+
+  /** Creates an isolated VM whose mutable globals survive successful executions. */
+  public synchronized ScriptInstance createInstance() {
+    return createInstance(InstanceConfig.DEFAULT);
+  }
+
+  /** Creates an isolated VM with a fixed hard heap limit. */
+  public synchronized ScriptInstance createInstance(InstanceConfig config) {
+    if (bytecode == null) {
+      throw new IllegalStateException("Compiled chunk is closed");
+    }
+    Objects.requireNonNull(config, "config");
+    return new ScriptInstance(chunkName, bytecode, config.maxMemoryBytes());
+  }
+
+  static ExecutionResult decodeExecutionResult(NativeExecutionResult result) {
+    ExecutionMetrics metrics =
+        new ExecutionMetrics(
+            Duration.ofNanos(result.elapsedNanos()),
+            result.interruptChecks(),
+            result.currentMemoryBytes(),
+            result.peakMemoryBytes());
+    String message =
+        result.messageUtf8() == null
+            ? ""
+            : new String(result.messageUtf8(), StandardCharsets.UTF_8);
+    return switch (result.status()) {
+      case 0 ->
+          new ExecutionResult.Completed(
+              NativeValueCodec.fromNativeValues(result.values()), metrics);
+      case 1 -> new ExecutionResult.RuntimeFailed(message, metrics);
+      case 2 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.RUNTIME, message, metrics);
+      case 3 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.INTERRUPT_CHECKS, message, metrics);
+      case 4 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.MEMORY, message, metrics);
+      default -> throw new LinkageError("Unknown native execution status: " + result.status());
+    };
   }
 
   LuauRuntime runtime() {

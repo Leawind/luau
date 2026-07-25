@@ -1,0 +1,101 @@
+package io.github.suterxom.luau.v1.api;
+
+import io.github.suterxom.luau.internal.jni.NativeBindings;
+import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
+import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Objects;
+
+/**
+ * An isolated persistent Luau VM.
+ *
+ * <p>The current API executes the compiled root chunk. Mutable globals survive successful calls.
+ * Export invocation will be added on top of this lifecycle without sharing state between instances.
+ */
+public final class ScriptInstance implements AutoCloseable {
+  private final Thread ownerThread;
+  private final byte[] chunkNameUtf8;
+  private final byte[] bytecode;
+  private final long maxMemoryBytes;
+  private long nativeHandle;
+  private boolean faulted;
+
+  ScriptInstance(String chunkName, byte[] bytecode, long maxMemoryBytes) {
+    this.chunkNameUtf8 =
+        Objects.requireNonNull(chunkName, "chunkName").getBytes(StandardCharsets.UTF_8);
+    this.bytecode = Objects.requireNonNull(bytecode, "bytecode").clone();
+    this.maxMemoryBytes = maxMemoryBytes;
+    this.ownerThread = Thread.currentThread();
+    this.nativeHandle =
+        NativeBindings.createInstance(this.chunkNameUtf8, this.bytecode, maxMemoryBytes);
+  }
+
+  public synchronized ExecutionResult execute() {
+    return execute(ExecutionBudget.DEFAULT);
+  }
+
+  public synchronized ExecutionResult execute(ExecutionBudget budget) {
+    checkOwnerThread();
+    checkUsable();
+    Objects.requireNonNull(budget, "budget");
+
+    ExecutionResult result =
+        CompiledChunk.decodeExecutionResult(
+            NativeBindings.executeInstance(
+                nativeHandle, budget.maxRuntimeNanos(), budget.maxInterruptChecks()));
+    if (!(result instanceof ExecutionResult.Completed)) {
+      faulted = true;
+    }
+    return result;
+  }
+
+  public synchronized boolean isFaulted() {
+    checkOwnerThread();
+    if (nativeHandle == 0) {
+      throw new IllegalStateException("Script instance is closed");
+    }
+    return faulted;
+  }
+
+  public Thread ownerThread() {
+    return ownerThread;
+  }
+
+  /** Replaces a faulted or healthy VM with a clean VM using the same compiled chunk. */
+  public synchronized void reset() {
+    checkOwnerThread();
+    if (nativeHandle == 0) {
+      throw new IllegalStateException("Script instance is closed");
+    }
+    long replacement = NativeBindings.createInstance(chunkNameUtf8, bytecode, maxMemoryBytes);
+    NativeBindings.closeInstance(nativeHandle);
+    nativeHandle = replacement;
+    faulted = false;
+  }
+
+  @Override
+  public synchronized void close() {
+    checkOwnerThread();
+    if (nativeHandle != 0) {
+      NativeBindings.closeInstance(nativeHandle);
+      nativeHandle = 0;
+      Arrays.fill(bytecode, (byte) 0);
+    }
+  }
+
+  private void checkUsable() {
+    if (nativeHandle == 0) {
+      throw new IllegalStateException("Script instance is closed");
+    }
+    if (faulted) {
+      throw new IllegalStateException("Script instance is faulted");
+    }
+  }
+
+  private void checkOwnerThread() {
+    if (Thread.currentThread() != ownerThread) {
+      throw new IllegalStateException("Script instance can only be used from its owner thread");
+    }
+  }
+}

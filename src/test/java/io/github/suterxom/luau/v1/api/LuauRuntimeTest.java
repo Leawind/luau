@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
+import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
 import io.github.suterxom.luau.v1.api.value.LuauBoolean;
 import io.github.suterxom.luau.v1.api.value.LuauNil;
 import io.github.suterxom.luau.v1.api.value.LuauNumber;
@@ -25,7 +26,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(2, info.jniAbiVersion());
+    assertEquals(3, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertTrue(info.nativePlatform().startsWith("linux-"));
   }
@@ -167,5 +168,56 @@ class LuauRuntimeTest {
       assertEquals(ExecutionResult.LimitExceeded.Kind.MEMORY, exceeded.kind());
       assertTrue(exceeded.metrics().peakMemoryBytes() <= 64L * 1024 * 1024);
     }
+  }
+
+  @Test
+  void persistentInstancesKeepStateWithoutSharingIt() {
+    var compilation =
+        runtime.compile(
+            "persistent",
+            """
+            --!nocheck
+            counter = (counter or 0) + 1
+            return counter
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance first = chunk.createInstance();
+        ScriptInstance second = chunk.createInstance()) {
+      assertEquals(
+          List.of(new LuauNumber(1)),
+          assertInstanceOf(ExecutionResult.Completed.class, first.execute()).values());
+      assertEquals(
+          List.of(new LuauNumber(2)),
+          assertInstanceOf(ExecutionResult.Completed.class, first.execute()).values());
+      assertEquals(
+          List.of(new LuauNumber(1)),
+          assertInstanceOf(ExecutionResult.Completed.class, second.execute()).values());
+    }
+  }
+
+  @Test
+  void failedPersistentInstanceBecomesFaulted() {
+    var compilation = runtime.compile("faulted", "error('boom')");
+    assertTrue(compilation.successful());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.RuntimeFailed.class, instance.execute());
+      assertTrue(instance.isFaulted());
+      assertThrows(IllegalStateException.class, instance::execute);
+      instance.reset();
+      assertFalse(instance.isFaulted());
+      assertInstanceOf(ExecutionResult.RuntimeFailed.class, instance.execute());
+    }
+  }
+
+  @Test
+  void validatesInstanceMemoryLimits() {
+    assertThrows(IllegalArgumentException.class, () -> new InstanceConfig(1024));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new InstanceConfig(1024L * 1024 * 1024 + 1));
   }
 }

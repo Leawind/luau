@@ -63,3 +63,9 @@ try (var chunk = compilation.chunk().orElseThrow();
 ```
 
 The root module must return an export table. `initialize()` runs its top-level code once, while `invokeExport()` calls a function from that table. Handle the other `ExecutionResult` variants when scripts may pause, exceed limits, or fail at runtime.
+
+## Third-party notices
+
+This project embeds and distributes the [Luau](https://github.com/luau-lang/luau) implementation. Luau is distributed under the MIT License and is based on the Lua 5.x implementation, which is also distributed under the MIT License.
+
+Please refer to [`native/luau/LICENSE.txt`](native/luau/LICENSE.txt) and [`native/luau/lua_LICENSE.txt`](native/luau/lua_LICENSE.txt) for the applicable license texts.

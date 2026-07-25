@@ -3,7 +3,7 @@ package io.github.suterxom.luau.internal.jni;
 import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 4;
+  public static final int EXPECTED_ABI_VERSION = 5;
 
   static {
     NativeLibraryLoader.load();

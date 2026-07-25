@@ -38,7 +38,8 @@ public sealed interface ExecutionResult
     public enum Kind {
       RUNTIME,
       INTERRUPT_CHECKS,
-      MEMORY
+      MEMORY,
+      VALUE_CODEC
     }
   }
 }

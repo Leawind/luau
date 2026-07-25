@@ -96,6 +96,10 @@ public final class CompiledChunk implements AutoCloseable {
       case 4 ->
           new ExecutionResult.LimitExceeded(
               ExecutionResult.LimitExceeded.Kind.MEMORY, message, metrics);
+      case 5 -> new ExecutionResult.RuntimeFailed(message, metrics);
+      case 6 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.VALUE_CODEC, message, metrics);
       default -> throw new LinkageError("Unknown native execution status: " + result.status());
     };
   }

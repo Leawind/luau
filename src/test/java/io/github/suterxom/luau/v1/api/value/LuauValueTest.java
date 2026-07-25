@@ -50,4 +50,14 @@ class LuauValueTest {
         NullPointerException.class,
         () -> new LuauArray(java.util.Arrays.asList(LuauNil.INSTANCE, null)));
   }
+
+  @Test
+  void stringsAndTableKeysRejectUnpairedSurrogates() {
+    String malformed = "\ud800";
+
+    assertThrows(IllegalArgumentException.class, () -> new LuauString(malformed));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new LuauTable(java.util.Map.of(malformed, LuauNil.INSTANCE)));
+  }
 }

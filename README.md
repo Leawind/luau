@@ -7,7 +7,8 @@ Luau Runtime 是一个为 Minecraft 模组提供沙箱化 Luau 编译和执行�
 - Fabric、Forge 和 NeoForge 共用的模组元数据。
 - 固定版本的官方 Luau C++ 运行时。
 - JNI 原生库构建、内嵌、校验和装载。
-- 单文件 Luau 编译、沙箱执行和基础安全返回值。
+- 单文件 Luau 编译、沙箱执行，以及 nil、boolean、number、UTF-8 string、buffer、
+  数组和字符串键 table 的双向安全编解码。
 - 执行时间、interrupt 检查次数和 VM 堆内存硬限制。
 - 相互隔离的持久 `ScriptInstance`、所有者线程约束和 faulted/reset 生命周期。
 - 根模块初始化、只读导出表和带安全参数的导出函数调用。

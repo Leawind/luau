@@ -10,12 +10,17 @@ import io.github.suterxom.luau.internal.loader.NativePlatform;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
+import io.github.suterxom.luau.v1.api.value.LuauArray;
 import io.github.suterxom.luau.v1.api.value.LuauBoolean;
+import io.github.suterxom.luau.v1.api.value.LuauBuffer;
 import io.github.suterxom.luau.v1.api.value.LuauNil;
 import io.github.suterxom.luau.v1.api.value.LuauNumber;
 import io.github.suterxom.luau.v1.api.value.LuauString;
+import io.github.suterxom.luau.v1.api.value.LuauTable;
+import io.github.suterxom.luau.v1.api.value.LuauValue;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class LuauRuntimeTest {
@@ -27,7 +32,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(4, info.jniAbiVersion());
+    assertEquals(5, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
@@ -275,6 +280,215 @@ class LuauRuntimeTest {
                   ExecutionResult.Completed.class,
                   instance.invokeExport("echo", List.of(new LuauString("你好😀"))))
               .values());
+    }
+  }
+
+  @Test
+  void roundTripsNestedSafeValuesThroughExportCalls() {
+    var compilation =
+        runtime.compile(
+            "structured-values",
+            """
+            --!nocheck
+            return {
+                echo = function(value)
+                    return value
+                end,
+                create = function()
+                    return {
+                        ["键😀"] = "值",
+                        items = {1, true, ""},
+                        payload = buffer.fromstring("\\0Luau"),
+                    }
+                end,
+            }
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    LuauValue input =
+        new LuauTable(
+            Map.of(
+                "键😀\0",
+                new LuauString("值😀"),
+                "items",
+                new LuauArray(
+                    List.of(
+                        new LuauNumber(1),
+                        new LuauBoolean(false),
+                        new LuauString(""))),
+                "empty",
+                new LuauBuffer(new byte[0]),
+                "emptyArray",
+                new LuauArray(List.of()),
+                "emptyTable",
+                new LuauTable(Map.of()),
+                "arrayWithNil",
+                new LuauArray(List.of(LuauNil.INSTANCE, new LuauString("after nil"))),
+                "payload",
+                new LuauBuffer(new byte[] {0, 1, -1})));
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+
+      var echoed =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.invokeExport("echo", List.of(input)));
+      assertEquals(List.of(input), echoed.values());
+
+      var created =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.invokeExport("create", List.of()));
+      assertEquals(
+          List.of(
+              new LuauTable(
+                  Map.of(
+                      "键😀",
+                      new LuauString("值"),
+                      "items",
+                      new LuauArray(
+                          List.of(
+                              new LuauNumber(1),
+                              new LuauBoolean(true),
+                              new LuauString(""))),
+                      "payload",
+                      new LuauBuffer(new byte[] {0, 'L', 'u', 'a', 'u'})))),
+          created.values());
+    }
+  }
+
+  @Test
+  void rejectsUnsafeAndCyclicReturnValuesAsStructuredFailures() {
+    assertStructuredValueFailure(
+        "invalid-key",
+        """
+        --!nocheck
+        return {run = function()
+            return {[true] = "not allowed"}
+        end}
+        """,
+        "key type");
+    assertStructuredValueFailure(
+        "cyclic-table",
+        """
+        --!nocheck
+        return {run = function()
+            local value = {}
+            value.self = value
+            return value
+        end}
+        """,
+        "Cyclic");
+    assertStructuredValueFailure(
+        "invalid-utf8",
+        """
+        --!nocheck
+        return {run = function()
+            return string.char(255)
+        end}
+        """,
+        "UTF-8");
+  }
+
+  @Test
+  void reportsNestedReturnValueBudgetAsLimitExceeded() {
+    var compilation =
+        runtime.compile(
+            "deep-value",
+            """
+            --!nocheck
+            return {run = function()
+                local root = {}
+                local current = root
+                for _ = 1, 34 do
+                    local child = {}
+                    current.child = child
+                    current = child
+                end
+                return root
+            end}
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      var exceeded =
+          assertInstanceOf(
+              ExecutionResult.LimitExceeded.class,
+              instance.invokeExport("run", List.of()));
+      assertEquals(ExecutionResult.LimitExceeded.Kind.VALUE_CODEC, exceeded.kind());
+      assertTrue(exceeded.message().contains("depth"));
+      assertTrue(instance.isFaulted());
+    }
+  }
+
+  @Test
+  void reportsOversizedReturnBufferAsValueCodecLimit() {
+    var compilation =
+        runtime.compile(
+            "large-return-value",
+            """
+            --!nocheck
+            return {run = function()
+                return buffer.create(1024 * 1024 + 1)
+            end}
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      var exceeded =
+          assertInstanceOf(
+              ExecutionResult.LimitExceeded.class,
+              instance.invokeExport("run", List.of()));
+      assertEquals(ExecutionResult.LimitExceeded.Kind.VALUE_CODEC, exceeded.kind());
+      assertTrue(exceeded.message().contains("buffer byte"));
+      assertTrue(instance.isFaulted());
+    }
+  }
+
+  @Test
+  void rejectsOversizedJavaValuesBeforeEnteringTheVm() {
+    var compilation =
+        runtime.compile(
+            "input-limit",
+            """
+            --!nocheck
+            return {echo = function(value) return value end}
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              instance.invokeExport(
+                  "echo",
+                  List.of(new LuauBuffer(new byte[1024 * 1024 + 1]))));
+      assertFalse(instance.isFaulted());
+    }
+  }
+
+  private void assertStructuredValueFailure(
+      String chunkName, String source, String expectedMessage) {
+    var compilation = runtime.compile(chunkName, source);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      var failure =
+          assertInstanceOf(
+              ExecutionResult.RuntimeFailed.class,
+              instance.invokeExport("run", List.of()));
+      assertTrue(failure.message().contains(expectedMessage), failure::message);
+      assertTrue(instance.isFaulted());
     }
   }
 }

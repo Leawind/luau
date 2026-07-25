@@ -2,12 +2,18 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Luau/BuiltinDefinitions.h"
@@ -29,12 +35,23 @@ constexpr int VALUE_NIL = 0;
 constexpr int VALUE_BOOLEAN = 1;
 constexpr int VALUE_NUMBER = 2;
 constexpr int VALUE_STRING = 3;
+constexpr int VALUE_BUFFER = 4;
+constexpr int VALUE_ARRAY = 5;
+constexpr int VALUE_TABLE = 6;
+
+constexpr size_t VALUE_MAX_DEPTH = 32;
+constexpr size_t VALUE_MAX_NODES = 10'000;
+constexpr size_t VALUE_MAX_STRING_BYTES = 512 * 1024;
+constexpr size_t VALUE_MAX_BUFFER_BYTES = 1024 * 1024;
+constexpr size_t VALUE_MAX_TOTAL_BYTES = 1024 * 1024;
 
 constexpr int EXECUTION_COMPLETED = 0;
 constexpr int EXECUTION_RUNTIME_FAILED = 1;
 constexpr int EXECUTION_RUNTIME_LIMIT = 2;
 constexpr int EXECUTION_INTERRUPT_LIMIT = 3;
 constexpr int EXECUTION_MEMORY_LIMIT = 4;
+constexpr int EXECUTION_VALUE_ERROR = 5;
+constexpr int EXECUTION_VALUE_LIMIT = 6;
 
 struct ExecutionContext
 {
@@ -279,6 +296,59 @@ std::string getUtf8Bytes(JNIEnv* env, jbyteArray value)
     return result;
 }
 
+bool isValidUtf8(std::string_view value)
+{
+    size_t index = 0;
+    while (index < value.size())
+    {
+        const auto first = static_cast<unsigned char>(value[index]);
+        if (first <= 0x7f)
+        {
+            ++index;
+            continue;
+        }
+
+        size_t continuationCount = 0;
+        unsigned char secondMinimum = 0x80;
+        unsigned char secondMaximum = 0xbf;
+        if (first >= 0xc2 && first <= 0xdf)
+            continuationCount = 1;
+        else if (first >= 0xe0 && first <= 0xef)
+        {
+            continuationCount = 2;
+            if (first == 0xe0)
+                secondMinimum = 0xa0;
+            else if (first == 0xed)
+                secondMaximum = 0x9f;
+        }
+        else if (first >= 0xf0 && first <= 0xf4)
+        {
+            continuationCount = 3;
+            if (first == 0xf0)
+                secondMinimum = 0x90;
+            else if (first == 0xf4)
+                secondMaximum = 0x8f;
+        }
+        else
+            return false;
+
+        if (index + continuationCount >= value.size())
+            return false;
+        const auto second = static_cast<unsigned char>(value[index + 1]);
+        if (second < secondMinimum || second > secondMaximum)
+            return false;
+        for (size_t continuation = 2; continuation <= continuationCount; ++continuation)
+        {
+            const auto byte =
+                static_cast<unsigned char>(value[index + continuation]);
+            if (byte < 0x80 || byte > 0xbf)
+                return false;
+        }
+        index += continuationCount + 1;
+    }
+    return true;
+}
+
 std::string luaError(lua_State* state)
 {
     size_t length = 0;
@@ -291,27 +361,33 @@ jobject newNativeValue(
     int kind,
     bool booleanValue = false,
     double numberValue = 0.0,
-    std::string_view bytes = {})
+    std::optional<std::string_view> bytes = std::nullopt,
+    jobjectArray elements = nullptr,
+    jobjectArray keysUtf8 = nullptr)
 {
     jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
     if (valueClass == nullptr)
         return nullptr;
 
-    jmethodID constructor = env->GetMethodID(valueClass, "<init>", "(IZD[B)V");
+    jmethodID constructor = env->GetMethodID(
+        valueClass,
+        "<init>",
+        "(IZD[B[Lio/github/suterxom/luau/internal/jni/NativeValue;[[B)V");
     if (constructor == nullptr)
+    {
+        env->DeleteLocalRef(valueClass);
         return nullptr;
+    }
 
     jbyteArray byteValue = nullptr;
-    if (!bytes.empty())
+    if (bytes.has_value())
     {
-        byteValue = env->NewByteArray(static_cast<jsize>(bytes.size()));
+        byteValue = newByteArray(env, *bytes);
         if (byteValue == nullptr)
+        {
+            env->DeleteLocalRef(valueClass);
             return nullptr;
-        env->SetByteArrayRegion(
-            byteValue,
-            0,
-            static_cast<jsize>(bytes.size()),
-            reinterpret_cast<const jbyte*>(bytes.data()));
+        }
     }
 
     jobject result = env->NewObject(
@@ -320,14 +396,376 @@ jobject newNativeValue(
         static_cast<jint>(kind),
         static_cast<jboolean>(booleanValue),
         static_cast<jdouble>(numberValue),
-        byteValue);
+        byteValue,
+        elements,
+        keysUtf8);
+    env->DeleteLocalRef(valueClass);
     if (byteValue != nullptr)
         env->DeleteLocalRef(byteValue);
     return result;
 }
 
-jobject convertValue(JNIEnv* env, lua_State* state, int index)
+struct ValueCodecContext
 {
+    explicit ValueCodecContext(lua_State* state = nullptr)
+        : state(state)
+    {
+    }
+
+    ~ValueCodecContext()
+    {
+        if (state != nullptr)
+        {
+            for (int reference : arrayReferences)
+                lua_unref(state, reference);
+        }
+    }
+
+    size_t nodes = 0;
+    size_t stringBytes = 0;
+    size_t bufferBytes = 0;
+    size_t totalBytes = 0;
+    bool limitExceeded = false;
+    std::string error;
+    std::unordered_set<const void*> activeTables;
+    std::unordered_map<const void*, size_t> arrayLengths;
+
+    void rememberArray(lua_State* owner, int index, size_t length)
+    {
+        const void* pointer = lua_topointer(owner, index);
+        arrayLengths[pointer] = length;
+        arrayReferences.push_back(lua_ref(owner, index));
+    }
+
+    void resetBudget()
+    {
+        nodes = 0;
+        stringBytes = 0;
+        bufferBytes = 0;
+        totalBytes = 0;
+        limitExceeded = false;
+        error.clear();
+        activeTables.clear();
+    }
+
+    bool visit(size_t depth)
+    {
+        if (depth > VALUE_MAX_DEPTH)
+            return fail("Luau value exceeds maximum depth " + std::to_string(VALUE_MAX_DEPTH), true);
+        if (++nodes > VALUE_MAX_NODES)
+            return fail(
+                "Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES),
+                true);
+        return true;
+    }
+
+    bool addStringBytes(size_t count)
+    {
+        return addBytes(
+            "string",
+            stringBytes,
+            count,
+            VALUE_MAX_STRING_BYTES);
+    }
+
+    bool addBufferBytes(size_t count)
+    {
+        return addBytes(
+            "buffer",
+            bufferBytes,
+            count,
+            VALUE_MAX_BUFFER_BYTES);
+    }
+
+    bool fail(std::string message, bool isLimit = false)
+    {
+        if (error.empty())
+        {
+            error = std::move(message);
+            limitExceeded = isLimit;
+        }
+        return false;
+    }
+
+private:
+    lua_State* state;
+    std::vector<int> arrayReferences;
+
+    bool addBytes(
+        std::string_view kind,
+        size_t& current,
+        size_t count,
+        size_t maximum)
+    {
+        if (count > maximum - std::min(current, maximum))
+            return fail(
+                "Luau value exceeds maximum " + std::string(kind) +
+                    " byte count " + std::to_string(maximum),
+                true);
+        if (count > VALUE_MAX_TOTAL_BYTES - std::min(totalBytes, VALUE_MAX_TOTAL_BYTES))
+            return fail(
+                "Luau value exceeds maximum total byte count " +
+                    std::to_string(VALUE_MAX_TOTAL_BYTES),
+                true);
+        current += count;
+        totalBytes += count;
+        return true;
+    }
+};
+
+struct ActiveTableGuard
+{
+    ValueCodecContext& context;
+    const void* table;
+
+    ~ActiveTableGuard()
+    {
+        context.activeTables.erase(table);
+    }
+};
+
+jobject convertValue(
+    JNIEnv* env,
+    lua_State* state,
+    int index,
+    ValueCodecContext& context,
+    size_t depth);
+
+jobject convertTable(
+    JNIEnv* env,
+    lua_State* state,
+    int index,
+    ValueCodecContext& context,
+    size_t depth)
+{
+    const int tableIndex = lua_absindex(state, index);
+    if (lua_getmetatable(state, tableIndex))
+    {
+        lua_pop(state, 1);
+        context.fail("Luau tables with metatables cannot cross the value boundary");
+        return nullptr;
+    }
+
+    const void* tablePointer = lua_topointer(state, tableIndex);
+    if (!context.activeTables.insert(tablePointer).second)
+    {
+        context.fail("Cyclic Luau tables cannot cross the value boundary");
+        return nullptr;
+    }
+    ActiveTableGuard activeGuard{context, tablePointer};
+
+    size_t entryCount = 0;
+    size_t largestArrayIndex = 0;
+    bool hasArrayKeys = false;
+    bool hasStringKeys = false;
+    const auto knownArray = context.arrayLengths.find(tablePointer);
+    lua_pushnil(state);
+    while (lua_next(state, tableIndex) != 0)
+    {
+        ++entryCount;
+        const int keyType = lua_type(state, -2);
+        if (keyType == LUA_TNUMBER || keyType == LUA_TINTEGER)
+        {
+            const double number = lua_tonumber(state, -2);
+            if (!std::isfinite(number) || number < 1 || std::floor(number) != number ||
+                number > static_cast<double>(std::numeric_limits<int>::max()))
+            {
+                lua_pop(state, 2);
+                context.fail("Luau array keys must be consecutive positive integers");
+                return nullptr;
+            }
+            hasArrayKeys = true;
+            largestArrayIndex = std::max(largestArrayIndex, static_cast<size_t>(number));
+        }
+        else if (keyType == LUA_TSTRING)
+        {
+            hasStringKeys = true;
+        }
+        else
+        {
+            const std::string keyTypeName = lua_typename(state, keyType);
+            lua_pop(state, 2);
+            context.fail("Unsupported Luau table key type: " + keyTypeName);
+            return nullptr;
+        }
+
+        if (entryCount > VALUE_MAX_NODES)
+        {
+            lua_pop(state, 2);
+            context.fail(
+                "Luau value exceeds maximum node count " +
+                    std::to_string(VALUE_MAX_NODES),
+                true);
+            return nullptr;
+        }
+        lua_pop(state, 1);
+    }
+
+    if (hasStringKeys && (hasArrayKeys || knownArray != context.arrayLengths.end()))
+    {
+        context.fail("Mixed Luau array and string table keys are not supported");
+        return nullptr;
+    }
+    if (knownArray == context.arrayLengths.end() &&
+        hasArrayKeys &&
+        largestArrayIndex != entryCount)
+    {
+        context.fail("Sparse Luau arrays cannot cross the value boundary");
+        return nullptr;
+    }
+    const bool isArray = hasArrayKeys || knownArray != context.arrayLengths.end();
+    const size_t arrayLength =
+        knownArray == context.arrayLengths.end()
+            ? entryCount
+            : std::max(knownArray->second, largestArrayIndex);
+    if (arrayLength > VALUE_MAX_NODES)
+    {
+        context.fail(
+            "Luau value exceeds maximum node count " +
+                std::to_string(VALUE_MAX_NODES),
+            true);
+        return nullptr;
+    }
+
+    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
+    if (valueClass == nullptr)
+        return nullptr;
+    jobjectArray elements =
+        env->NewObjectArray(
+            static_cast<jsize>(isArray ? arrayLength : entryCount),
+            valueClass,
+            nullptr);
+    env->DeleteLocalRef(valueClass);
+    if (elements == nullptr)
+        return nullptr;
+
+    if (isArray)
+    {
+        for (size_t arrayIndex = 1; arrayIndex <= arrayLength; ++arrayIndex)
+        {
+            lua_rawgeti(state, tableIndex, static_cast<int>(arrayIndex));
+            jobject value =
+                convertValue(env, state, -1, context, depth + 1);
+            lua_pop(state, 1);
+            if (value == nullptr)
+            {
+                env->DeleteLocalRef(elements);
+                return nullptr;
+            }
+            env->SetObjectArrayElement(
+                elements,
+                static_cast<jsize>(arrayIndex - 1),
+                value);
+            env->DeleteLocalRef(value);
+            if (env->ExceptionCheck())
+            {
+                env->DeleteLocalRef(elements);
+                return nullptr;
+            }
+        }
+        jobject result =
+            newNativeValue(env, VALUE_ARRAY, false, 0.0, std::nullopt, elements);
+        env->DeleteLocalRef(elements);
+        return result;
+    }
+
+    jclass byteArrayClass = env->FindClass("[B");
+    if (byteArrayClass == nullptr)
+    {
+        env->DeleteLocalRef(elements);
+        return nullptr;
+    }
+    jobjectArray keysUtf8 =
+        env->NewObjectArray(static_cast<jsize>(entryCount), byteArrayClass, nullptr);
+    env->DeleteLocalRef(byteArrayClass);
+    if (keysUtf8 == nullptr)
+    {
+        env->DeleteLocalRef(elements);
+        return nullptr;
+    }
+
+    size_t outputIndex = 0;
+    lua_pushnil(state);
+    while (lua_next(state, tableIndex) != 0)
+    {
+        size_t keyLength = 0;
+        const char* key = lua_tolstring(state, -2, &keyLength);
+        const std::string_view keyView(key, keyLength);
+        if (!isValidUtf8(keyView))
+        {
+            lua_pop(state, 2);
+            env->DeleteLocalRef(keysUtf8);
+            env->DeleteLocalRef(elements);
+            context.fail("Luau table keys must contain valid UTF-8");
+            return nullptr;
+        }
+        if (!context.addStringBytes(keyLength))
+        {
+            lua_pop(state, 2);
+            env->DeleteLocalRef(keysUtf8);
+            env->DeleteLocalRef(elements);
+            return nullptr;
+        }
+
+        jbyteArray keyBytes = newByteArray(env, keyView);
+        jobject value =
+            convertValue(env, state, -1, context, depth + 1);
+        if (keyBytes == nullptr || value == nullptr)
+        {
+            lua_pop(state, 2);
+            if (keyBytes != nullptr)
+                env->DeleteLocalRef(keyBytes);
+            if (value != nullptr)
+                env->DeleteLocalRef(value);
+            env->DeleteLocalRef(keysUtf8);
+            env->DeleteLocalRef(elements);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(
+            keysUtf8,
+            static_cast<jsize>(outputIndex),
+            keyBytes);
+        env->SetObjectArrayElement(
+            elements,
+            static_cast<jsize>(outputIndex),
+            value);
+        env->DeleteLocalRef(keyBytes);
+        env->DeleteLocalRef(value);
+        if (env->ExceptionCheck())
+        {
+            lua_pop(state, 2);
+            env->DeleteLocalRef(keysUtf8);
+            env->DeleteLocalRef(elements);
+            return nullptr;
+        }
+        ++outputIndex;
+        lua_pop(state, 1);
+    }
+
+    jobject result =
+        newNativeValue(
+            env,
+            VALUE_TABLE,
+            false,
+            0.0,
+            std::nullopt,
+            elements,
+            keysUtf8);
+    env->DeleteLocalRef(keysUtf8);
+    env->DeleteLocalRef(elements);
+    return result;
+}
+
+jobject convertValue(
+    JNIEnv* env,
+    lua_State* state,
+    int index,
+    ValueCodecContext& context,
+    size_t depth)
+{
+    if (!context.visit(depth))
+        return nullptr;
+
     switch (lua_type(state, index))
     {
     case LUA_TNIL:
@@ -335,23 +773,59 @@ jobject convertValue(JNIEnv* env, lua_State* state, int index)
     case LUA_TBOOLEAN:
         return newNativeValue(env, VALUE_BOOLEAN, lua_toboolean(state, index) != 0);
     case LUA_TNUMBER:
+    case LUA_TINTEGER:
         return newNativeValue(env, VALUE_NUMBER, false, lua_tonumber(state, index));
     case LUA_TSTRING:
     {
         size_t length = 0;
         const char* value = lua_tolstring(state, index, &length);
-        return newNativeValue(env, VALUE_STRING, false, 0.0, std::string_view(value, length));
-    }
-    default:
-        throwNativeException(
+        const std::string_view stringValue(value == nullptr ? "" : value, length);
+        if (!isValidUtf8(stringValue))
+        {
+            context.fail("Luau strings must contain valid UTF-8");
+            return nullptr;
+        }
+        if (!context.addStringBytes(length))
+            return nullptr;
+        return newNativeValue(
             env,
-            std::string("Unsupported Luau return type: ") + lua_typename(state, lua_type(state, index)));
+            VALUE_STRING,
+            false,
+            0.0,
+            stringValue);
+    }
+    case LUA_TBUFFER:
+    {
+        size_t length = 0;
+        const auto* value = static_cast<const char*>(lua_tobuffer(state, index, &length));
+        if (!context.addBufferBytes(length))
+            return nullptr;
+        return newNativeValue(
+            env,
+            VALUE_BUFFER,
+            false,
+            0.0,
+            std::string_view(value == nullptr ? "" : value, length));
+    }
+    case LUA_TTABLE:
+        return convertTable(env, state, index, context, depth);
+    default:
+        context.fail(
+            std::string("Unsupported Luau return type: ") +
+            lua_typename(state, lua_type(state, index)));
         return nullptr;
     }
 }
 
-bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value)
+bool pushNativeValue(
+    JNIEnv* env,
+    lua_State* state,
+    jobject value,
+    ValueCodecContext& context,
+    size_t depth)
 {
+    if (!context.visit(depth))
+        return false;
     jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
     if (valueClass == nullptr)
         return false;
@@ -359,8 +833,18 @@ bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value)
     jmethodID booleanMethod = env->GetMethodID(valueClass, "booleanValue", "()Z");
     jmethodID numberMethod = env->GetMethodID(valueClass, "numberValue", "()D");
     jmethodID bytesMethod = env->GetMethodID(valueClass, "bytes", "()[B");
-    if (kindMethod == nullptr || booleanMethod == nullptr || numberMethod == nullptr || bytesMethod == nullptr)
+    jmethodID elementsMethod = env->GetMethodID(
+        valueClass,
+        "elements",
+        "()[Lio/github/suterxom/luau/internal/jni/NativeValue;");
+    jmethodID keysMethod = env->GetMethodID(valueClass, "keysUtf8", "()[[B");
+    if (kindMethod == nullptr || booleanMethod == nullptr || numberMethod == nullptr ||
+        bytesMethod == nullptr || elementsMethod == nullptr || keysMethod == nullptr)
+    {
+        env->DeleteLocalRef(valueClass);
         return false;
+    }
+    env->DeleteLocalRef(valueClass);
 
     const jint kind = env->CallIntMethod(value, kindMethod);
     if (env->ExceptionCheck())
@@ -377,6 +861,7 @@ bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value)
         lua_pushnumber(state, env->CallDoubleMethod(value, numberMethod));
         return !env->ExceptionCheck();
     case VALUE_STRING:
+    case VALUE_BUFFER:
     {
         auto bytes = static_cast<jbyteArray>(env->CallObjectMethod(value, bytesMethod));
         if (env->ExceptionCheck() || bytes == nullptr)
@@ -385,32 +870,161 @@ bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value)
         env->DeleteLocalRef(bytes);
         if (env->ExceptionCheck())
             return false;
-        lua_pushlstring(state, stringValue.data(), stringValue.size());
+        if (kind == VALUE_STRING)
+        {
+            if (!isValidUtf8(stringValue))
+                return context.fail("Native string bytes must contain valid UTF-8");
+            if (!context.addStringBytes(stringValue.size()))
+                return false;
+            lua_pushlstring(state, stringValue.data(), stringValue.size());
+        }
+        else
+        {
+            if (!context.addBufferBytes(stringValue.size()))
+                return false;
+            void* buffer = lua_newbuffer(state, stringValue.size());
+            if (!stringValue.empty())
+                std::memcpy(buffer, stringValue.data(), stringValue.size());
+        }
+        return true;
+    }
+    case VALUE_ARRAY:
+    {
+        auto elements =
+            static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
+        if (env->ExceptionCheck() || elements == nullptr)
+            return false;
+        const jsize count = env->GetArrayLength(elements);
+        lua_createtable(state, count, 0);
+        const int tableIndex = lua_absindex(state, -1);
+        context.rememberArray(state, tableIndex, static_cast<size_t>(count));
+        for (jsize index = 0; index < count; ++index)
+        {
+            jobject element = env->GetObjectArrayElement(elements, index);
+            if (element == nullptr ||
+                !pushNativeValue(env, state, element, context, depth + 1))
+            {
+                if (element != nullptr)
+                    env->DeleteLocalRef(element);
+                env->DeleteLocalRef(elements);
+                return false;
+            }
+            env->DeleteLocalRef(element);
+            lua_rawseti(state, tableIndex, index + 1);
+        }
+        env->DeleteLocalRef(elements);
+        return true;
+    }
+    case VALUE_TABLE:
+    {
+        auto elements =
+            static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
+        auto keysUtf8 =
+            static_cast<jobjectArray>(env->CallObjectMethod(value, keysMethod));
+        if (env->ExceptionCheck() || elements == nullptr || keysUtf8 == nullptr)
+        {
+            if (elements != nullptr)
+                env->DeleteLocalRef(elements);
+            if (keysUtf8 != nullptr)
+                env->DeleteLocalRef(keysUtf8);
+            return false;
+        }
+        const jsize count = env->GetArrayLength(elements);
+        if (env->GetArrayLength(keysUtf8) != count)
+        {
+            env->DeleteLocalRef(keysUtf8);
+            env->DeleteLocalRef(elements);
+            return context.fail("Native table key/value length mismatch");
+        }
+
+        lua_createtable(state, 0, count);
+        const int tableIndex = lua_absindex(state, -1);
+        std::unordered_set<std::string> keys;
+        for (jsize index = 0; index < count; ++index)
+        {
+            auto keyBytes =
+                static_cast<jbyteArray>(env->GetObjectArrayElement(keysUtf8, index));
+            jobject element = env->GetObjectArrayElement(elements, index);
+            if (keyBytes == nullptr || element == nullptr)
+            {
+                if (keyBytes != nullptr)
+                    env->DeleteLocalRef(keyBytes);
+                if (element != nullptr)
+                    env->DeleteLocalRef(element);
+                env->DeleteLocalRef(keysUtf8);
+                env->DeleteLocalRef(elements);
+                return false;
+            }
+            const std::string key = getUtf8Bytes(env, keyBytes);
+            env->DeleteLocalRef(keyBytes);
+            if (env->ExceptionCheck() || !isValidUtf8(key) ||
+                !context.addStringBytes(key.size()))
+            {
+                if (!env->ExceptionCheck() && context.error.empty())
+                    context.fail("Native table keys must contain valid UTF-8");
+                env->DeleteLocalRef(element);
+                env->DeleteLocalRef(keysUtf8);
+                env->DeleteLocalRef(elements);
+                return false;
+            }
+            if (!keys.insert(key).second)
+            {
+                env->DeleteLocalRef(element);
+                env->DeleteLocalRef(keysUtf8);
+                env->DeleteLocalRef(elements);
+                return context.fail("Duplicate native table key");
+            }
+
+            lua_pushlstring(state, key.data(), key.size());
+            if (!pushNativeValue(env, state, element, context, depth + 1))
+            {
+                env->DeleteLocalRef(element);
+                env->DeleteLocalRef(keysUtf8);
+                env->DeleteLocalRef(elements);
+                return false;
+            }
+            env->DeleteLocalRef(element);
+            lua_rawset(state, tableIndex);
+        }
+        env->DeleteLocalRef(keysUtf8);
+        env->DeleteLocalRef(elements);
         return true;
     }
     default:
-        throwNativeException(env, "Unsupported Java-to-Luau value kind");
-        return false;
+        return context.fail("Unsupported Java-to-Luau value kind");
     }
 }
 
-jobjectArray newNativeValueArray(JNIEnv* env, lua_State* state, int resultCount)
+jobjectArray newNativeValueArray(
+    JNIEnv* env,
+    lua_State* state,
+    int resultCount,
+    ValueCodecContext& context)
 {
     jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
     if (valueClass == nullptr)
         return nullptr;
 
     jobjectArray result = env->NewObjectArray(resultCount, valueClass, nullptr);
+    env->DeleteLocalRef(valueClass);
     if (result == nullptr)
         return nullptr;
 
     for (int index = 1; index <= resultCount; ++index)
     {
-        jobject value = convertValue(env, state, index);
+        jobject value = convertValue(env, state, index, context, 0);
         if (env->ExceptionCheck() || value == nullptr)
+        {
+            env->DeleteLocalRef(result);
             return nullptr;
+        }
         env->SetObjectArrayElement(result, index - 1, value);
         env->DeleteLocalRef(value);
+        if (env->ExceptionCheck())
+        {
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
     }
     return result;
 }
@@ -536,9 +1150,28 @@ jobject executeChunk(
         *exportsRef = lua_ref(thread, 1);
     }
 
+    ValueCodecContext valueContext;
     jobjectArray values =
-        newNativeValueArray(env, thread, captureExports ? 0 : lua_gettop(thread));
+        newNativeValueArray(
+            env,
+            thread,
+            captureExports ? 0 : lua_gettop(thread),
+            valueContext);
     if (values == nullptr)
+    {
+        if (env->ExceptionCheck())
+            return nullptr;
+        context.lastStatus =
+            valueContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+        return newNativeExecutionResult(
+            env,
+            context.lastStatus,
+            nullptr,
+            valueContext.error.empty() ? "Failed to encode Luau return values" : valueContext.error,
+            elapsedNanos,
+            context);
+    }
+    if (env->ExceptionCheck())
         return nullptr;
     jobject result = newNativeExecutionResult(
         env,
@@ -917,11 +1550,28 @@ jobject invokeExportImpl(
     }
 
     const jsize argumentCount = env->GetArrayLength(arguments);
+    ValueCodecContext argumentContext(instance->thread);
     for (jsize index = 0; index < argumentCount; ++index)
     {
         jobject argument = env->GetObjectArrayElement(arguments, index);
-        if (argument == nullptr || !pushNativeValue(env, instance->thread, argument))
+        if (argument == nullptr ||
+            !pushNativeValue(
+                env,
+                instance->thread,
+                argument,
+                argumentContext,
+                0))
+        {
+            if (argument != nullptr)
+                env->DeleteLocalRef(argument);
+            if (!env->ExceptionCheck())
+                throwNativeException(
+                    env,
+                    argumentContext.error.empty()
+                        ? "Failed to decode Java arguments"
+                        : argumentContext.error);
             return nullptr;
+        }
         env->DeleteLocalRef(argument);
     }
 
@@ -967,12 +1617,29 @@ jobject invokeExportImpl(
             context);
     }
 
+    argumentContext.resetBudget();
     jobjectArray values =
-        newNativeValueArray(env, instance->thread, lua_gettop(instance->thread));
+        newNativeValueArray(
+            env,
+            instance->thread,
+            lua_gettop(instance->thread),
+            argumentContext);
     if (values == nullptr)
     {
         instance->faulted = true;
-        return nullptr;
+        if (env->ExceptionCheck())
+            return nullptr;
+        context.lastStatus =
+            argumentContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+        return newNativeExecutionResult(
+            env,
+            context.lastStatus,
+            nullptr,
+            argumentContext.error.empty()
+                ? "Failed to encode Luau return values"
+                : argumentContext.error,
+            elapsedNanos,
+            context);
     }
     jobject result = newNativeExecutionResult(
         env,

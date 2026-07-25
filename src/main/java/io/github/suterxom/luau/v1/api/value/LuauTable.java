@@ -6,6 +6,8 @@ import java.util.Objects;
 /** An immutable string-keyed table of safe Luau values. */
 public record LuauTable(Map<String, LuauValue> values) implements LuauValue {
   public LuauTable {
-    values = Map.copyOf(Objects.requireNonNull(values, "values"));
+    values = Objects.requireNonNull(values, "values");
+    values.keySet().forEach(key -> LuauUtf8.requireWellFormed(key, "table key"));
+    values = Map.copyOf(values);
   }
 }

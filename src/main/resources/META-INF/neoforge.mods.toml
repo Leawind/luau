@@ -9,7 +9,7 @@ displayName = "${name}"
 authors = "${author}"
 description = '''${description}'''
 
-[[dependencies.${id}]]
+[["dependencies.${id}"]]
 modId = "minecraft"
 type = "required"
 versionRange = "[${minecraftVersion},)"

@@ -7,7 +7,7 @@ import java.util.Objects;
 public record LuauTable(Map<String, LuauValue> values) implements LuauValue {
   public LuauTable {
     values = Objects.requireNonNull(values, "values");
-    values.keySet().forEach(key -> LuauUtf8.requireWellFormed(key, "table key"));
+    values.keySet().forEach(key->LuauUtf8.requireWellFormed(key, "table key"));
     values = Map.copyOf(values);
   }
 }

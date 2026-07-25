@@ -6,10 +6,10 @@ import java.util.Objects;
 public record SourceLocation(String moduleName, int line) {
   public SourceLocation {
     Objects.requireNonNull(moduleName, "moduleName");
-    if (moduleName.isBlank()) {
+    if(moduleName.isBlank()){
       throw new IllegalArgumentException("Source module name must not be blank");
     }
-    if (line <= 0) {
+    if(line <= 0){
       throw new IllegalArgumentException("Source line must be positive");
     }
   }

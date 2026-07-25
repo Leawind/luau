@@ -1,17 +1,16 @@
 package io.github.suterxom.luau.internal.jni;
 
-public record NativeCompilationDiagnostic(
-    int stage, byte[] moduleNameUtf8, byte[] messageUtf8) {
+public record NativeCompilationDiagnostic(int stage, byte[] moduleNameUtf8, byte[] messageUtf8) {
   public NativeCompilationDiagnostic {
     moduleNameUtf8 = moduleNameUtf8.clone();
     messageUtf8 = messageUtf8.clone();
   }
-
+  
   @Override
   public byte[] moduleNameUtf8() {
     return moduleNameUtf8.clone();
   }
-
+  
   @Override
   public byte[] messageUtf8() {
     return messageUtf8.clone();

@@ -6,19 +6,39 @@ import java.util.Objects;
 
 /** Result of one sandboxed Luau execution. */
 public sealed interface ExecutionResult
-    permits ExecutionResult.Completed, ExecutionResult.RuntimeFailed {
+    permits ExecutionResult.Completed, ExecutionResult.RuntimeFailed, ExecutionResult.LimitExceeded {
+
+  ExecutionMetrics metrics();
 
   /** Successful execution and all values returned by the chunk. */
-  record Completed(List<LuauValue> values) implements ExecutionResult {
+  record Completed(List<LuauValue> values, ExecutionMetrics metrics) implements ExecutionResult {
     public Completed {
       values = List.copyOf(Objects.requireNonNull(values, "values"));
+      Objects.requireNonNull(metrics, "metrics");
     }
   }
 
   /** A Luau runtime or host boundary error. */
-  record RuntimeFailed(String message) implements ExecutionResult {
+  record RuntimeFailed(String message, ExecutionMetrics metrics) implements ExecutionResult {
     public RuntimeFailed {
       Objects.requireNonNull(message, "message");
+      Objects.requireNonNull(metrics, "metrics");
+    }
+  }
+
+  /** Execution stopped because a hard resource limit was reached. */
+  record LimitExceeded(Kind kind, String message, ExecutionMetrics metrics)
+      implements ExecutionResult {
+    public LimitExceeded {
+      Objects.requireNonNull(kind, "kind");
+      Objects.requireNonNull(message, "message");
+      Objects.requireNonNull(metrics, "metrics");
+    }
+
+    public enum Kind {
+      RUNTIME,
+      INTERRUPT_CHECKS,
+      MEMORY
     }
   }
 }

@@ -1,5 +1,8 @@
 #include <jni.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <memory>
@@ -26,6 +29,72 @@ constexpr int VALUE_NIL = 0;
 constexpr int VALUE_BOOLEAN = 1;
 constexpr int VALUE_NUMBER = 2;
 constexpr int VALUE_STRING = 3;
+
+constexpr int EXECUTION_COMPLETED = 0;
+constexpr int EXECUTION_RUNTIME_FAILED = 1;
+constexpr int EXECUTION_RUNTIME_LIMIT = 2;
+constexpr int EXECUTION_INTERRUPT_LIMIT = 3;
+constexpr int EXECUTION_MEMORY_LIMIT = 4;
+
+struct ExecutionContext
+{
+    size_t currentMemory = 0;
+    size_t peakMemory = 0;
+    size_t maxMemory = 0;
+    uint64_t interruptChecks = 0;
+    uint64_t maxInterruptChecks = 0;
+    std::chrono::steady_clock::time_point startedAt;
+    std::chrono::steady_clock::time_point deadline;
+    int exceededLimit = EXECUTION_COMPLETED;
+};
+
+void* limitedAllocate(void* userdata, void* pointer, size_t oldSize, size_t newSize)
+{
+    auto* context = static_cast<ExecutionContext*>(userdata);
+    if (newSize == 0)
+    {
+        context->currentMemory =
+            oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
+        std::free(pointer);
+        return nullptr;
+    }
+
+    const size_t memoryWithoutOld =
+        oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
+    if (newSize > context->maxMemory - std::min(memoryWithoutOld, context->maxMemory))
+    {
+        context->exceededLimit = EXECUTION_MEMORY_LIMIT;
+        return nullptr;
+    }
+
+    void* result = std::realloc(pointer, newSize);
+    if (result != nullptr)
+    {
+        context->currentMemory = memoryWithoutOld + newSize;
+        context->peakMemory = std::max(context->peakMemory, context->currentMemory);
+    }
+    return result;
+}
+
+void executionInterrupt(lua_State* state, int gcState)
+{
+    if (gcState >= 0)
+        return;
+
+    auto* context = static_cast<ExecutionContext*>(lua_callbacks(state)->userdata);
+    ++context->interruptChecks;
+
+    if (context->interruptChecks > context->maxInterruptChecks)
+        context->exceededLimit = EXECUTION_INTERRUPT_LIMIT;
+    else if (std::chrono::steady_clock::now() >= context->deadline)
+        context->exceededLimit = EXECUTION_RUNTIME_LIMIT;
+    else
+        return;
+
+    lua_callbacks(state)->interrupt = nullptr;
+    lua_rawcheckstack(state, 1);
+    luaL_error(state, "%s", "Luau execution resource limit exceeded");
+}
 
 struct LuaStateCloser
 {
@@ -242,6 +311,65 @@ jobject convertValue(JNIEnv* env, lua_State* state, int index)
         return nullptr;
     }
 }
+
+jobjectArray newNativeValueArray(JNIEnv* env, lua_State* state, int resultCount)
+{
+    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
+    if (valueClass == nullptr)
+        return nullptr;
+
+    jobjectArray result = env->NewObjectArray(resultCount, valueClass, nullptr);
+    if (result == nullptr)
+        return nullptr;
+
+    for (int index = 1; index <= resultCount; ++index)
+    {
+        jobject value = convertValue(env, state, index);
+        if (env->ExceptionCheck() || value == nullptr)
+            return nullptr;
+        env->SetObjectArrayElement(result, index - 1, value);
+        env->DeleteLocalRef(value);
+    }
+    return result;
+}
+
+jobject newNativeExecutionResult(
+    JNIEnv* env,
+    int status,
+    jobjectArray values,
+    std::string_view message,
+    uint64_t elapsedNanos,
+    const ExecutionContext& context)
+{
+    jclass resultClass =
+        env->FindClass("io/github/suterxom/luau/internal/jni/NativeExecutionResult");
+    if (resultClass == nullptr)
+        return nullptr;
+    jmethodID constructor = env->GetMethodID(
+        resultClass,
+        "<init>",
+        "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJ)V");
+    if (constructor == nullptr)
+        return nullptr;
+
+    jbyteArray messageBytes = message.empty() ? nullptr : newByteArray(env, message);
+    if (!message.empty() && messageBytes == nullptr)
+        return nullptr;
+
+    jobject result = env->NewObject(
+        resultClass,
+        constructor,
+        static_cast<jint>(status),
+        values,
+        messageBytes,
+        static_cast<jlong>(elapsedNanos),
+        static_cast<jlong>(context.interruptChecks),
+        static_cast<jlong>(context.currentMemory),
+        static_cast<jlong>(context.peakMemory));
+    if (messageBytes != nullptr)
+        env->DeleteLocalRef(messageBytes);
+    return result;
+}
 } // namespace
 } // namespace suterxom::luau
 
@@ -385,11 +513,14 @@ jobjectArray typecheckImpl(
     return result;
 }
 
-jobjectArray executeImpl(
+jobject executeImpl(
     JNIEnv* env,
     jclass,
     jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes)
+    jbyteArray bytecodeBytes,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks,
+    jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
 
@@ -397,22 +528,46 @@ jobjectArray executeImpl(
     const std::string bytecode = getUtf8Bytes(env, bytecodeBytes);
     if (env->ExceptionCheck())
         return nullptr;
+    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxMemoryBytes <= 0)
+    {
+        throwNativeException(env, "Native execution limits must be positive");
+        return nullptr;
+    }
 
-    LuaStatePtr globalState(luaL_newstate());
+    ExecutionContext context;
+    context.maxMemory = static_cast<size_t>(maxMemoryBytes);
+    context.maxInterruptChecks = static_cast<uint64_t>(maxInterruptChecks);
+
+    LuaStatePtr globalState(lua_newstate(limitedAllocate, &context));
     if (globalState == nullptr)
     {
-        throwNativeException(env, "Failed to create a Luau state");
-        return nullptr;
+        context.exceededLimit = EXECUTION_MEMORY_LIMIT;
+        return newNativeExecutionResult(
+            env,
+            EXECUTION_MEMORY_LIMIT,
+            nullptr,
+            "Luau VM memory limit exceeded while creating the state",
+            0,
+            context);
     }
 
     luaL_openlibs(globalState.get());
     luaL_sandbox(globalState.get());
+    lua_Callbacks* callbacks = lua_callbacks(globalState.get());
+    callbacks->userdata = &context;
+    callbacks->interrupt = executionInterrupt;
 
     lua_State* thread = lua_newthread(globalState.get());
     if (thread == nullptr)
     {
-        throwNativeException(env, "Failed to create a Luau execution thread");
-        return nullptr;
+        context.exceededLimit = EXECUTION_MEMORY_LIMIT;
+        return newNativeExecutionResult(
+            env,
+            EXECUTION_MEMORY_LIMIT,
+            nullptr,
+            "Luau VM memory limit exceeded while creating the execution thread",
+            0,
+            context);
     }
     luaL_sandboxthread(thread);
 
@@ -420,35 +575,62 @@ jobjectArray executeImpl(
         luau_load(thread, chunk.c_str(), bytecode.data(), bytecode.size(), 0);
     if (loadStatus != LUA_OK)
     {
-        throwNativeException(env, luaError(thread));
-        return nullptr;
+        const int status =
+            loadStatus == LUA_ERRMEM ? EXECUTION_MEMORY_LIMIT : EXECUTION_RUNTIME_FAILED;
+        return newNativeExecutionResult(
+            env,
+            status,
+            nullptr,
+            luaError(thread),
+            0,
+            context);
     }
 
+    context.startedAt = std::chrono::steady_clock::now();
+    context.deadline =
+        context.startedAt + std::chrono::nanoseconds(static_cast<int64_t>(maxRuntimeNanos));
     const int executionStatus = lua_resume(thread, nullptr, 0);
+    const auto finishedAt = std::chrono::steady_clock::now();
+    const uint64_t elapsedNanos = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(finishedAt - context.startedAt).count());
+
     if (executionStatus != LUA_OK)
     {
-        throwNativeException(env, luaError(thread));
-        return nullptr;
-    }
+        int status = EXECUTION_RUNTIME_FAILED;
+        if (context.exceededLimit != EXECUTION_COMPLETED)
+            status = context.exceededLimit;
+        else if (executionStatus == LUA_ERRMEM)
+            status = EXECUTION_MEMORY_LIMIT;
 
-    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
-    if (valueClass == nullptr)
-        return nullptr;
+        std::string message = luaError(thread);
+        if (status == EXECUTION_RUNTIME_LIMIT)
+            message = "Luau execution exceeded its maximum runtime";
+        else if (status == EXECUTION_INTERRUPT_LIMIT)
+            message = "Luau execution exceeded its interrupt-check budget";
+        else if (status == EXECUTION_MEMORY_LIMIT)
+            message = "Luau execution exceeded its VM memory limit";
+
+        return newNativeExecutionResult(
+            env,
+            status,
+            nullptr,
+            message,
+            elapsedNanos,
+            context);
+    }
 
     const int resultCount = lua_gettop(thread);
-    jobjectArray result = env->NewObjectArray(resultCount, valueClass, nullptr);
-    if (result == nullptr)
+    jobjectArray values = newNativeValueArray(env, thread, resultCount);
+    if (values == nullptr)
         return nullptr;
-
-    for (int index = 1; index <= resultCount; ++index)
-    {
-        jobject value = convertValue(env, thread, index);
-        if (env->ExceptionCheck() || value == nullptr)
-            return nullptr;
-        env->SetObjectArrayElement(result, index - 1, value);
-        env->DeleteLocalRef(value);
-    }
-
+    jobject result = newNativeExecutionResult(
+        env,
+        EXECUTION_COMPLETED,
+        values,
+        {},
+        elapsedNanos,
+        context);
+    env->DeleteLocalRef(values);
     return result;
 }
 
@@ -484,19 +666,29 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheck(
         });
 }
 
-JNIEXPORT jobjectArray JNICALL
+JNIEXPORT jobject JNICALL
 Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
     JNIEnv* env,
     jclass bindingClass,
     jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes)
+    jbyteArray bytecodeBytes,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks,
+    jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
-    return guardNativeCall<jobjectArray>(
+    return guardNativeCall<jobject>(
         env,
         [&]()
         {
-            return executeImpl(env, bindingClass, chunkNameUtf8, bytecodeBytes);
+            return executeImpl(
+                env,
+                bindingClass,
+                chunkNameUtf8,
+                bytecodeBytes,
+                maxRuntimeNanos,
+                maxInterruptChecks,
+                maxMemoryBytes);
         });
 }
 }

@@ -3,7 +3,7 @@ package io.github.suterxom.luau.internal.jni;
 import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 1;
+  public static final int EXPECTED_ABI_VERSION = 2;
 
   static {
     NativeLibraryLoader.load();
@@ -31,5 +31,10 @@ public final class NativeBindings {
 
   public static native byte[][] typecheck(byte[] chunkNameUtf8, byte[] sourceUtf8);
 
-  public static native NativeValue[] execute(byte[] chunkNameUtf8, byte[] bytecode);
+  public static native NativeExecutionResult execute(
+      byte[] chunkNameUtf8,
+      byte[] bytecode,
+      long maxRuntimeNanos,
+      long maxInterruptChecks,
+      long maxMemoryBytes);
 }

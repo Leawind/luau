@@ -8,6 +8,7 @@ Luau Runtime 是一个为 Minecraft 模组提供沙箱化 Luau 编译和执行�
 - 固定版本的官方 Luau C++ 运行时。
 - JNI 原生库构建、内嵌、校验和装载。
 - 单文件 Luau 编译、沙箱执行和基础安全返回值。
+- 执行时间、interrupt 检查次数和 VM 堆内存硬限制。
 
 完整设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 

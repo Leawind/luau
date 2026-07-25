@@ -26,7 +26,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(3, info.jniAbiVersion());
+    assertEquals(4, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertTrue(info.nativePlatform().startsWith("linux-"));
   }
@@ -219,5 +219,61 @@ class LuauRuntimeTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> new InstanceConfig(1024L * 1024 * 1024 + 1));
+  }
+
+  @Test
+  void initializesAndInvokesRootExports() {
+    var compilation =
+        runtime.compile(
+            "exports",
+            """
+            local total = 0
+            return {
+                add = function(left: number, right: number): number
+                    return left + right
+                end,
+                accumulate = function(value: number): number
+                    total += value
+                    return total
+                end,
+                echo = function(value: string): string
+                    return value
+                end,
+            }
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      var initialized =
+          assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      assertTrue(initialized.values().isEmpty());
+
+      var sum =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.invokeExport(
+                  "add", List.of(new LuauNumber(20), new LuauNumber(22))));
+      assertEquals(List.of(new LuauNumber(42)), sum.values());
+
+      assertEquals(
+          List.of(new LuauNumber(3)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  instance.invokeExport("accumulate", List.of(new LuauNumber(3))))
+              .values());
+      assertEquals(
+          List.of(new LuauNumber(7)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  instance.invokeExport("accumulate", List.of(new LuauNumber(4))))
+              .values());
+      assertEquals(
+          List.of(new LuauString("你好😀")),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  instance.invokeExport("echo", List.of(new LuauString("你好😀"))))
+              .values());
+    }
   }
 }

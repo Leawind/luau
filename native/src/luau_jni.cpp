@@ -117,6 +117,8 @@ struct NativeScriptInstance
     std::string chunk;
     std::string bytecode;
     bool faulted = false;
+    bool initialized = false;
+    int exportsRef = -1;
 
     NativeScriptInstance(std::string chunk, std::string bytecode, size_t maxMemory)
         : globalState(nullptr)
@@ -348,6 +350,50 @@ jobject convertValue(JNIEnv* env, lua_State* state, int index)
     }
 }
 
+bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value)
+{
+    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
+    if (valueClass == nullptr)
+        return false;
+    jmethodID kindMethod = env->GetMethodID(valueClass, "kind", "()I");
+    jmethodID booleanMethod = env->GetMethodID(valueClass, "booleanValue", "()Z");
+    jmethodID numberMethod = env->GetMethodID(valueClass, "numberValue", "()D");
+    jmethodID bytesMethod = env->GetMethodID(valueClass, "bytes", "()[B");
+    if (kindMethod == nullptr || booleanMethod == nullptr || numberMethod == nullptr || bytesMethod == nullptr)
+        return false;
+
+    const jint kind = env->CallIntMethod(value, kindMethod);
+    if (env->ExceptionCheck())
+        return false;
+    switch (kind)
+    {
+    case VALUE_NIL:
+        lua_pushnil(state);
+        return true;
+    case VALUE_BOOLEAN:
+        lua_pushboolean(state, env->CallBooleanMethod(value, booleanMethod));
+        return !env->ExceptionCheck();
+    case VALUE_NUMBER:
+        lua_pushnumber(state, env->CallDoubleMethod(value, numberMethod));
+        return !env->ExceptionCheck();
+    case VALUE_STRING:
+    {
+        auto bytes = static_cast<jbyteArray>(env->CallObjectMethod(value, bytesMethod));
+        if (env->ExceptionCheck() || bytes == nullptr)
+            return false;
+        const std::string stringValue = getUtf8Bytes(env, bytes);
+        env->DeleteLocalRef(bytes);
+        if (env->ExceptionCheck())
+            return false;
+        lua_pushlstring(state, stringValue.data(), stringValue.size());
+        return true;
+    }
+    default:
+        throwNativeException(env, "Unsupported Java-to-Luau value kind");
+        return false;
+    }
+}
+
 jobjectArray newNativeValueArray(JNIEnv* env, lua_State* state, int resultCount)
 {
     jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
@@ -414,7 +460,9 @@ jobject executeChunk(
     const std::string& chunk,
     const std::string& bytecode,
     uint64_t maxRuntimeNanos,
-    uint64_t maxInterruptChecks)
+    uint64_t maxInterruptChecks,
+    bool captureExports = false,
+    int* exportsRef = nullptr)
 {
     context.interruptChecks = 0;
     context.maxInterruptChecks = maxInterruptChecks;
@@ -471,7 +519,25 @@ jobject executeChunk(
             context);
     }
 
-    jobjectArray values = newNativeValueArray(env, thread, lua_gettop(thread));
+    if (captureExports)
+    {
+        if (lua_gettop(thread) != 1 || lua_type(thread, 1) != LUA_TTABLE)
+        {
+            context.lastStatus = EXECUTION_RUNTIME_FAILED;
+            return newNativeExecutionResult(
+                env,
+                EXECUTION_RUNTIME_FAILED,
+                nullptr,
+                "Root module must return exactly one export table",
+                elapsedNanos,
+                context);
+        }
+        lua_setreadonly(thread, 1, true);
+        *exportsRef = lua_ref(thread, 1);
+    }
+
+    jobjectArray values =
+        newNativeValueArray(env, thread, captureExports ? 0 : lua_gettop(thread));
     if (values == nullptr)
         return nullptr;
     jobject result = newNativeExecutionResult(
@@ -765,6 +831,160 @@ jobject executeInstanceImpl(
     return result;
 }
 
+jobject initializeInstanceImpl(
+    JNIEnv* env,
+    jlong handle,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks)
+{
+    using namespace suterxom::luau;
+
+    auto* instance =
+        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+    if (instance == nullptr || instance->faulted || instance->initialized)
+    {
+        throwNativeException(env, "Script instance cannot be initialized in its current state");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0)
+    {
+        throwNativeException(env, "Native execution limits must be positive");
+        return nullptr;
+    }
+
+    lua_resetthread(instance->thread);
+    lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+    jobject result = executeChunk(
+        env,
+        instance->thread,
+        instance->context,
+        instance->chunk,
+        instance->bytecode,
+        static_cast<uint64_t>(maxRuntimeNanos),
+        static_cast<uint64_t>(maxInterruptChecks),
+        true,
+        &instance->exportsRef);
+    if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
+        instance->faulted = true;
+    else
+        instance->initialized = true;
+    return result;
+}
+
+jobject invokeExportImpl(
+    JNIEnv* env,
+    jlong handle,
+    jbyteArray exportNameUtf8,
+    jobjectArray arguments,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks)
+{
+    using namespace suterxom::luau;
+
+    auto* instance =
+        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+    if (instance == nullptr || instance->faulted || !instance->initialized)
+    {
+        throwNativeException(env, "Script instance cannot invoke exports in its current state");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0)
+    {
+        throwNativeException(env, "Native execution limits must be positive");
+        return nullptr;
+    }
+
+    const std::string exportName = getUtf8Bytes(env, exportNameUtf8);
+    if (env->ExceptionCheck())
+        return nullptr;
+
+    lua_resetthread(instance->thread);
+    lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+    lua_getref(instance->thread, instance->exportsRef);
+    lua_getfield(instance->thread, -1, exportName.c_str());
+    lua_remove(instance->thread, -2);
+    if (lua_type(instance->thread, -1) != LUA_TFUNCTION)
+    {
+        instance->context.lastStatus = EXECUTION_RUNTIME_FAILED;
+        instance->faulted = true;
+        return newNativeExecutionResult(
+            env,
+            EXECUTION_RUNTIME_FAILED,
+            nullptr,
+            "Export is missing or is not a function: " + exportName,
+            0,
+            instance->context);
+    }
+
+    const jsize argumentCount = env->GetArrayLength(arguments);
+    for (jsize index = 0; index < argumentCount; ++index)
+    {
+        jobject argument = env->GetObjectArrayElement(arguments, index);
+        if (argument == nullptr || !pushNativeValue(env, instance->thread, argument))
+            return nullptr;
+        env->DeleteLocalRef(argument);
+    }
+
+    ExecutionContext& context = instance->context;
+    context.interruptChecks = 0;
+    context.maxInterruptChecks = static_cast<uint64_t>(maxInterruptChecks);
+    context.exceededLimit = EXECUTION_COMPLETED;
+    context.lastStatus = EXECUTION_COMPLETED;
+    lua_callbacks(instance->thread)->interrupt = executionInterrupt;
+    context.startedAt = std::chrono::steady_clock::now();
+    context.deadline =
+        context.startedAt + std::chrono::nanoseconds(static_cast<int64_t>(maxRuntimeNanos));
+
+    const int executionStatus =
+        lua_pcall(instance->thread, argumentCount, LUA_MULTRET, 0);
+    const auto finishedAt = std::chrono::steady_clock::now();
+    const uint64_t elapsedNanos = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(finishedAt - context.startedAt).count());
+
+    if (executionStatus != LUA_OK)
+    {
+        int status = EXECUTION_RUNTIME_FAILED;
+        if (context.exceededLimit != EXECUTION_COMPLETED)
+            status = context.exceededLimit;
+        else if (executionStatus == LUA_ERRMEM)
+            status = EXECUTION_MEMORY_LIMIT;
+        context.lastStatus = status;
+        instance->faulted = true;
+
+        std::string message = luaError(instance->thread);
+        if (status == EXECUTION_RUNTIME_LIMIT)
+            message = "Luau execution exceeded its maximum runtime";
+        else if (status == EXECUTION_INTERRUPT_LIMIT)
+            message = "Luau execution exceeded its interrupt-check budget";
+        else if (status == EXECUTION_MEMORY_LIMIT)
+            message = "Luau execution exceeded its VM memory limit";
+        return newNativeExecutionResult(
+            env,
+            status,
+            nullptr,
+            message,
+            elapsedNanos,
+            context);
+    }
+
+    jobjectArray values =
+        newNativeValueArray(env, instance->thread, lua_gettop(instance->thread));
+    if (values == nullptr)
+    {
+        instance->faulted = true;
+        return nullptr;
+    }
+    jobject result = newNativeExecutionResult(
+        env,
+        EXECUTION_COMPLETED,
+        values,
+        {},
+        elapsedNanos,
+        context);
+    env->DeleteLocalRef(values);
+    return result;
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_io_github_suterxom_luau_internal_jni_NativeBindings_compile(
     JNIEnv* env,
@@ -865,6 +1085,52 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
             return executeInstanceImpl(
                 env,
                 handle,
+                maxRuntimeNanos,
+                maxInterruptChecks);
+        });
+}
+
+JNIEXPORT jobject JNICALL
+Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks)
+{
+    using namespace suterxom::luau;
+    return guardNativeCall<jobject>(
+        env,
+        [&]()
+        {
+            return initializeInstanceImpl(
+                env,
+                handle,
+                maxRuntimeNanos,
+                maxInterruptChecks);
+        });
+}
+
+JNIEXPORT jobject JNICALL
+Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jbyteArray exportNameUtf8,
+    jobjectArray arguments,
+    jlong maxRuntimeNanos,
+    jlong maxInterruptChecks)
+{
+    using namespace suterxom::luau;
+    return guardNativeCall<jobject>(
+        env,
+        [&]()
+        {
+            return invokeExportImpl(
+                env,
+                handle,
+                exportNameUtf8,
+                arguments,
                 maxRuntimeNanos,
                 maxInterruptChecks);
         });

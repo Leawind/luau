@@ -192,6 +192,20 @@ Java API 契约、运行时关闭或原生环境损坏等宿主错误才使用 J
 类型声明和运行时导出必须由宿主共同维护。运行时验证导出名称、函数签名所需的基本
 约束，但 Luau 类型声明是否准确最终由注册模块的宿主负责。
 
+公开 API 使用 `HostModule(name, interfaceVersion, typeDeclaration, factory)` 表示
+宿主模块。`typeDeclaration` 是一个只参与类型检查的 strict Luau 模块体，例如：
+
+```luau
+return (nil :: any) :: {
+    send: (string) -> boolean,
+    receive: () -> buffer?,
+}
+```
+
+该声明不会编译或执行。`factory` 为每个 `ScriptInstance` 创建一份独立的
+`Map<String, HostFunction>`；无状态的 `CompiledChunk.execute` 每次执行也创建一份
+新的导出。编译过程本身不调用 factory。
+
 每个脚本实例只获得创建它时明确传入的模块集合。注册表中存在某个模块，不代表所有
 脚本都自动获得该模块。
 
@@ -221,6 +235,9 @@ Java 异常不得穿过 JNI 边界。未预期的 Java 异常在 JNI 层捕获�
 
 `HostCallContext` 可以让宿主实现访问当前设备和命令缓冲，但这些 Java 对象永远不会
 编码或暴露给 Luau。上下文还负责累计宿主调用次数和宿主主动登记的输出成本。
+Java 能力使用显式类型键放入上下文，宿主函数通过 `find` 或 `require` 读取；
+`recordOutputBytes` 登记会计成本。一个上下文对应一个上层逻辑调用，不应同时交给
+多个并发执行共享。
 
 宿主函数必须快速、确定且不阻塞。文件访问、数据库操作或其他可能长时间阻塞的工作
 应由上层模组在脚本执行之外调度。

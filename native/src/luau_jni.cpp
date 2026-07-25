@@ -53,6 +53,8 @@ constexpr int EXECUTION_INTERRUPT_LIMIT = 3;
 constexpr int EXECUTION_MEMORY_LIMIT = 4;
 constexpr int EXECUTION_VALUE_ERROR = 5;
 constexpr int EXECUTION_VALUE_LIMIT = 6;
+constexpr int EXECUTION_HOST_CALL_LIMIT = 7;
+constexpr int EXECUTION_HOST_OUTPUT_LIMIT = 8;
 
 struct ExecutionContext
 {
@@ -61,6 +63,10 @@ struct ExecutionContext
     size_t maxMemory = 0;
     uint64_t interruptChecks = 0;
     uint64_t maxInterruptChecks = 0;
+    uint64_t hostCalls = 0;
+    uint64_t maxHostCalls = 0;
+    uint64_t hostOutputBytes = 0;
+    uint64_t maxHostOutputBytes = 0;
     std::chrono::steady_clock::time_point startedAt;
     std::chrono::steady_clock::time_point deadline;
     int exceededLimit = EXECUTION_COMPLETED;
@@ -129,6 +135,11 @@ using BytecodePtr = std::unique_ptr<char, decltype(&std::free)>;
 
 struct NativeScriptInstance;
 int requireSourceModule(lua_State* state);
+bool pushHostModule(
+    lua_State* state,
+    NativeScriptInstance* instance,
+    std::string_view moduleName);
+int invokeHostFunction(lua_State* state);
 
 struct NativeScriptInstance
 {
@@ -139,18 +150,29 @@ struct NativeScriptInstance
     std::unordered_map<std::string, std::string> moduleBytecodes;
     std::unordered_map<std::string, int> moduleCache;
     std::unordered_set<std::string> loadingModules;
+    JavaVM* javaVm = nullptr;
+    jobject hostRegistry = nullptr;
+    jobject currentHostContext = nullptr;
     bool faulted = false;
     bool initialized = false;
     int exportsRef = -1;
 
     NativeScriptInstance(
+        JNIEnv* env,
         std::string rootModuleName,
         std::unordered_map<std::string, std::string> moduleBytecodes,
+        jobject hostRegistry,
         size_t maxMemory)
         : globalState(nullptr)
         , rootModuleName(std::move(rootModuleName))
         , moduleBytecodes(std::move(moduleBytecodes))
     {
+        if (env->GetJavaVM(&javaVm) != JNI_OK)
+            return;
+        this->hostRegistry = env->NewGlobalRef(hostRegistry);
+        if (this->hostRegistry == nullptr)
+            return;
+
         context.maxMemory = maxMemory;
         globalState.reset(lua_newstate(limitedAllocate, &context));
         if (globalState == nullptr)
@@ -172,11 +194,31 @@ struct NativeScriptInstance
         }
     }
 
+    ~NativeScriptInstance()
+    {
+        if (hostRegistry != nullptr && javaVm != nullptr)
+        {
+            JNIEnv* env = nullptr;
+            if (javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) == JNI_OK)
+                env->DeleteGlobalRef(hostRegistry);
+        }
+    }
+
     bool valid() const
     {
-        return globalState != nullptr &&
+        return hostRegistry != nullptr &&
+            globalState != nullptr &&
             thread != nullptr &&
             moduleBytecodes.find(rootModuleName) != moduleBytecodes.end();
+    }
+
+    JNIEnv* environment() const
+    {
+        JNIEnv* env = nullptr;
+        if (javaVm == nullptr ||
+            javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) != JNI_OK)
+            return nullptr;
+        return env;
     }
 };
 
@@ -490,6 +532,12 @@ int requireSourceModule(lua_State* state)
     const auto module = instance->moduleBytecodes.find(moduleName);
     if (module == instance->moduleBytecodes.end())
     {
+        if (pushHostModule(state, instance, moduleName))
+        {
+            const int reference = lua_ref(state, -1);
+            instance->moduleCache.emplace(moduleName, reference);
+            return 1;
+        }
         const std::string message =
             "Module is not registered in this program: " + moduleName;
         luaL_error(state, "%s", message.c_str());
@@ -1223,6 +1271,328 @@ jobjectArray newNativeValueArray(
     return result;
 }
 
+void reportAndClearJavaException(JNIEnv* env)
+{
+    if (env->ExceptionCheck())
+    {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+}
+
+bool pushHostModule(
+    lua_State* state,
+    NativeScriptInstance* instance,
+    std::string_view moduleName)
+{
+    JNIEnv* env = instance->environment();
+    if (env == nullptr)
+        luaL_error(state, "%s", "Java host environment is unavailable");
+
+    jclass registryClass = env->GetObjectClass(instance->hostRegistry);
+    jmethodID exportsMethod = registryClass == nullptr
+        ? nullptr
+        : env->GetMethodID(registryClass, "exports", "([B)[[B");
+    jbyteArray moduleNameBytes =
+        exportsMethod == nullptr ? nullptr : newByteArray(env, moduleName);
+    jobjectArray exports = moduleNameBytes == nullptr
+        ? nullptr
+        : static_cast<jobjectArray>(
+            env->CallObjectMethod(
+                instance->hostRegistry,
+                exportsMethod,
+                moduleNameBytes));
+    if (moduleNameBytes != nullptr)
+        env->DeleteLocalRef(moduleNameBytes);
+    if (registryClass != nullptr)
+        env->DeleteLocalRef(registryClass);
+    if (env->ExceptionCheck())
+    {
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host module lookup failed internally");
+    }
+    if (exports == nullptr)
+        return false;
+
+    const jsize exportCount = env->GetArrayLength(exports);
+    lua_createtable(state, 0, exportCount);
+    const int tableIndex = lua_absindex(state, -1);
+    for (jsize index = 0; index < exportCount; ++index)
+    {
+        auto exportNameBytes =
+            static_cast<jbyteArray>(env->GetObjectArrayElement(exports, index));
+        if (env->ExceptionCheck() || exportNameBytes == nullptr)
+        {
+            if (exportNameBytes != nullptr)
+                env->DeleteLocalRef(exportNameBytes);
+            env->DeleteLocalRef(exports);
+            reportAndClearJavaException(env);
+            luaL_error(state, "%s", "Host module export lookup failed internally");
+        }
+        const std::string exportName = getUtf8Bytes(env, exportNameBytes);
+        env->DeleteLocalRef(exportNameBytes);
+        if (env->ExceptionCheck() ||
+            exportName.empty() ||
+            exportName.size() > 256 ||
+            !isValidUtf8(exportName) ||
+            exportName.find('\0') != std::string::npos)
+        {
+            env->DeleteLocalRef(exports);
+            reportAndClearJavaException(env);
+            luaL_error(state, "%s", "Host module returned an invalid export name");
+        }
+
+        lua_pushlstring(state, moduleName.data(), moduleName.size());
+        lua_pushlstring(state, exportName.data(), exportName.size());
+        lua_pushcclosure(
+            state,
+            invokeHostFunction,
+            "host",
+            2);
+        lua_setfield(state, tableIndex, exportName.c_str());
+    }
+    env->DeleteLocalRef(exports);
+    lua_setreadonly(state, tableIndex, true);
+    return true;
+}
+
+int invokeHostFunction(lua_State* state)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr)
+        luaL_error(state, "%s", "Luau host call context is unavailable");
+    JNIEnv* env = instance->environment();
+    if (env == nullptr || instance->currentHostContext == nullptr)
+        luaL_error(state, "%s", "Java host call context is unavailable");
+
+    ExecutionContext& execution = instance->context;
+    ++execution.hostCalls;
+    if (execution.hostCalls > execution.maxHostCalls)
+    {
+        execution.exceededLimit = EXECUTION_HOST_CALL_LIMIT;
+        luaL_error(state, "%s", "Luau execution exceeded its host-call budget");
+    }
+
+    size_t moduleNameLength = 0;
+    size_t exportNameLength = 0;
+    const char* moduleName =
+        lua_tolstring(state, lua_upvalueindex(1), &moduleNameLength);
+    const char* exportName =
+        lua_tolstring(state, lua_upvalueindex(2), &exportNameLength);
+    const std::string_view moduleNameView(
+        moduleName == nullptr ? "" : moduleName,
+        moduleNameLength);
+    const std::string_view exportNameView(
+        exportName == nullptr ? "" : exportName,
+        exportNameLength);
+
+    ValueCodecContext argumentContext;
+    jobjectArray arguments =
+        newNativeValueArray(
+            env,
+            state,
+            lua_gettop(state),
+            argumentContext);
+    if (arguments == nullptr)
+    {
+        if (env->ExceptionCheck())
+        {
+            reportAndClearJavaException(env);
+            luaL_error(state, "%s", "Host argument conversion failed internally");
+        }
+        execution.exceededLimit =
+            argumentContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+        luaL_error(
+            state,
+            "%s",
+            argumentContext.error.empty()
+                ? "Failed to encode host function arguments"
+                : argumentContext.error.c_str());
+    }
+
+    jclass registryClass = env->GetObjectClass(instance->hostRegistry);
+    jmethodID invokeMethod = registryClass == nullptr
+        ? nullptr
+        : env->GetMethodID(
+            registryClass,
+            "invoke",
+            "([B[B[Lio/github/suterxom/luau/internal/jni/NativeValue;"
+            "Lio/github/suterxom/luau/v1/api/host/HostCallContext;)"
+            "Lio/github/suterxom/luau/internal/jni/NativeHostCallResult;");
+    jbyteArray moduleNameBytes =
+        invokeMethod == nullptr ? nullptr : newByteArray(env, moduleNameView);
+    jbyteArray exportNameBytes =
+        moduleNameBytes == nullptr ? nullptr : newByteArray(env, exportNameView);
+    jobject callResult =
+        exportNameBytes == nullptr
+            ? nullptr
+            : env->CallObjectMethod(
+                instance->hostRegistry,
+                invokeMethod,
+                moduleNameBytes,
+                exportNameBytes,
+                arguments,
+                instance->currentHostContext);
+    if (exportNameBytes != nullptr)
+        env->DeleteLocalRef(exportNameBytes);
+    if (moduleNameBytes != nullptr)
+        env->DeleteLocalRef(moduleNameBytes);
+    env->DeleteLocalRef(arguments);
+    if (registryClass != nullptr)
+        env->DeleteLocalRef(registryClass);
+    if (env->ExceptionCheck() || callResult == nullptr)
+    {
+        if (callResult != nullptr)
+            env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function failed internally");
+    }
+
+    jclass resultClass = env->GetObjectClass(callResult);
+    jmethodID statusMethod =
+        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "status", "()I");
+    jmethodID valuesMethod = resultClass == nullptr
+        ? nullptr
+        : env->GetMethodID(
+            resultClass,
+            "values",
+            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;");
+    jmethodID messageMethod =
+        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "messageUtf8", "()[B");
+    jmethodID outputMethod =
+        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "outputBytes", "()J");
+    if (statusMethod == nullptr ||
+        valuesMethod == nullptr ||
+        messageMethod == nullptr ||
+        outputMethod == nullptr)
+    {
+        if (resultClass != nullptr)
+            env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function result binding failed internally");
+    }
+
+    const jint status = env->CallIntMethod(callResult, statusMethod);
+    if (env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function returned an invalid boundary result");
+    }
+    const jlong outputBytes = env->CallLongMethod(callResult, outputMethod);
+    if (env->ExceptionCheck() || outputBytes < 0)
+    {
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function returned an invalid boundary result");
+    }
+    auto messageBytes =
+        static_cast<jbyteArray>(env->CallObjectMethod(callResult, messageMethod));
+    if (env->ExceptionCheck())
+    {
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function returned an invalid boundary result");
+    }
+    auto values =
+        static_cast<jobjectArray>(env->CallObjectMethod(callResult, valuesMethod));
+    if (env->ExceptionCheck() || values == nullptr)
+    {
+        if (messageBytes != nullptr)
+            env->DeleteLocalRef(messageBytes);
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        reportAndClearJavaException(env);
+        luaL_error(state, "%s", "Host function returned an invalid boundary result");
+    }
+
+    const uint64_t output = static_cast<uint64_t>(outputBytes);
+    if (output >
+        execution.maxHostOutputBytes -
+            std::min(execution.hostOutputBytes, execution.maxHostOutputBytes))
+    {
+        env->DeleteLocalRef(values);
+        if (messageBytes != nullptr)
+            env->DeleteLocalRef(messageBytes);
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        execution.hostOutputBytes =
+            output > std::numeric_limits<uint64_t>::max() - execution.hostOutputBytes
+                ? std::numeric_limits<uint64_t>::max()
+                : execution.hostOutputBytes + output;
+        execution.exceededLimit = EXECUTION_HOST_OUTPUT_LIMIT;
+        luaL_error(state, "%s", "Luau execution exceeded its host-output budget");
+    }
+    execution.hostOutputBytes += output;
+
+    if (status != 0)
+    {
+        const std::string message =
+            messageBytes == nullptr
+                ? "Host function failed"
+                : getUtf8Bytes(env, messageBytes);
+        env->DeleteLocalRef(values);
+        if (messageBytes != nullptr)
+            env->DeleteLocalRef(messageBytes);
+        env->DeleteLocalRef(resultClass);
+        env->DeleteLocalRef(callResult);
+        if (env->ExceptionCheck())
+        {
+            reportAndClearJavaException(env);
+            luaL_error(state, "%s", "Host function error conversion failed internally");
+        }
+        if (status == 3)
+            execution.exceededLimit = EXECUTION_VALUE_LIMIT;
+        luaL_error(state, "%s", message.c_str());
+    }
+
+    if (messageBytes != nullptr)
+        env->DeleteLocalRef(messageBytes);
+    const jsize resultCount = env->GetArrayLength(values);
+    ValueCodecContext resultContext(state);
+    for (jsize index = 0; index < resultCount; ++index)
+    {
+        jobject value = env->GetObjectArrayElement(values, index);
+        if (value == nullptr ||
+            !pushNativeValue(
+                env,
+                state,
+                value,
+                resultContext,
+                0))
+        {
+            if (value != nullptr)
+                env->DeleteLocalRef(value);
+            env->DeleteLocalRef(values);
+            env->DeleteLocalRef(resultClass);
+            env->DeleteLocalRef(callResult);
+            if (env->ExceptionCheck())
+            {
+                reportAndClearJavaException(env);
+                luaL_error(state, "%s", "Host return conversion failed internally");
+            }
+            execution.exceededLimit =
+                resultContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+            luaL_error(
+                state,
+                "%s",
+                resultContext.error.empty()
+                    ? "Failed to decode host function return values"
+                    : resultContext.error.c_str());
+        }
+        env->DeleteLocalRef(value);
+    }
+    env->DeleteLocalRef(values);
+    env->DeleteLocalRef(resultClass);
+    env->DeleteLocalRef(callResult);
+    return resultCount;
+}
+
 jobject newNativeExecutionResult(
     JNIEnv* env,
     int status,
@@ -1238,7 +1608,7 @@ jobject newNativeExecutionResult(
     jmethodID constructor = env->GetMethodID(
         resultClass,
         "<init>",
-        "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJ)V");
+        "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJJJ)V");
     if (constructor == nullptr)
         return nullptr;
 
@@ -1255,7 +1625,9 @@ jobject newNativeExecutionResult(
         static_cast<jlong>(elapsedNanos),
         static_cast<jlong>(context.interruptChecks),
         static_cast<jlong>(context.currentMemory),
-        static_cast<jlong>(context.peakMemory));
+        static_cast<jlong>(context.peakMemory),
+        static_cast<jlong>(context.hostCalls),
+        static_cast<jlong>(context.hostOutputBytes));
     if (messageBytes != nullptr)
         env->DeleteLocalRef(messageBytes);
     return result;
@@ -1269,11 +1641,17 @@ jobject executeChunk(
     const std::string& bytecode,
     uint64_t maxRuntimeNanos,
     uint64_t maxInterruptChecks,
+    uint64_t maxHostCalls,
+    uint64_t maxHostOutputBytes,
     bool captureExports = false,
     int* exportsRef = nullptr)
 {
     context.interruptChecks = 0;
     context.maxInterruptChecks = maxInterruptChecks;
+    context.hostCalls = 0;
+    context.maxHostCalls = maxHostCalls;
+    context.hostOutputBytes = 0;
+    context.maxHostOutputBytes = maxHostOutputBytes;
     context.exceededLimit = EXECUTION_COMPLETED;
     context.lastStatus = EXECUTION_COMPLETED;
     lua_callbacks(thread)->interrupt = executionInterrupt;
@@ -1301,7 +1679,12 @@ jobject executeChunk(
     const uint64_t elapsedNanos = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(finishedAt - context.startedAt).count());
 
-    if (executionStatus != LUA_OK)
+    if (finishedAt >= context.deadline &&
+        context.exceededLimit == EXECUTION_COMPLETED)
+        context.exceededLimit = EXECUTION_RUNTIME_LIMIT;
+
+    if (executionStatus != LUA_OK ||
+        context.exceededLimit != EXECUTION_COMPLETED)
     {
         int status = EXECUTION_RUNTIME_FAILED;
         if (context.exceededLimit != EXECUTION_COMPLETED)
@@ -1316,6 +1699,12 @@ jobject executeChunk(
             message = "Luau execution exceeded its interrupt-check budget";
         else if (status == EXECUTION_MEMORY_LIMIT)
             message = "Luau execution exceeded its VM memory limit";
+        else if (status == EXECUTION_VALUE_LIMIT)
+            message = "Luau execution exceeded its value-codec budget";
+        else if (status == EXECUTION_HOST_CALL_LIMIT)
+            message = "Luau execution exceeded its host-call budget";
+        else if (status == EXECUTION_HOST_OUTPUT_LIMIT)
+            message = "Luau execution exceeded its host-output budget";
 
         context.lastStatus = status;
         return newNativeExecutionResult(
@@ -1622,8 +2011,12 @@ jobject executeImpl(
     jbyteArray rootModuleNameUtf8,
     jobjectArray moduleNamesUtf8,
     jobjectArray bytecodeArrays,
+    jobject hostRegistry,
+    jobject hostContext,
     jlong maxRuntimeNanos,
     jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
@@ -1645,16 +2038,29 @@ jobject executeImpl(
         throwNativeException(env, "Root module is not present in native bytecode set");
         return nullptr;
     }
-    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxMemoryBytes <= 0)
+    if (hostRegistry == nullptr || hostContext == nullptr)
     {
-        throwNativeException(env, "Native execution limits must be positive");
+        throwNativeException(env, "Native host registry and call context must not be null");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 ||
+        maxInterruptChecks <= 0 ||
+        maxHostCalls < 0 ||
+        maxHostOutputBytes < 0 ||
+        maxMemoryBytes <= 0)
+    {
+        throwNativeException(env, "Native execution limits are invalid");
         return nullptr;
     }
 
     auto instance = std::make_unique<NativeScriptInstance>(
+        env,
         rootModuleName,
         std::move(moduleBytecodes),
+        hostRegistry,
         static_cast<size_t>(maxMemoryBytes));
+    if (env->ExceptionCheck())
+        return nullptr;
     if (!instance->valid())
     {
         instance->context.exceededLimit = EXECUTION_MEMORY_LIMIT;
@@ -1670,6 +2076,7 @@ jobject executeImpl(
     const auto rootBytecode =
         instance->moduleBytecodes.find(instance->rootModuleName);
     instance->loadingModules.insert(instance->rootModuleName);
+    instance->currentHostContext = hostContext;
     jobject result = executeChunk(
         env,
         instance->thread,
@@ -1677,7 +2084,10 @@ jobject executeImpl(
         instance->rootModuleName,
         rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks));
+        static_cast<uint64_t>(maxInterruptChecks),
+        static_cast<uint64_t>(maxHostCalls),
+        static_cast<uint64_t>(maxHostOutputBytes));
+    instance->currentHostContext = nullptr;
     instance->loadingModules.erase(instance->rootModuleName);
     return result;
 }
@@ -1687,6 +2097,7 @@ jlong createInstanceImpl(
     jbyteArray rootModuleNameUtf8,
     jobjectArray moduleNamesUtf8,
     jobjectArray bytecodeArrays,
+    jobject hostRegistry,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
@@ -1708,6 +2119,11 @@ jlong createInstanceImpl(
         throwNativeException(env, "Root module is not present in native bytecode set");
         return 0;
     }
+    if (hostRegistry == nullptr)
+    {
+        throwNativeException(env, "Native host registry must not be null");
+        return 0;
+    }
     if (maxMemoryBytes <= 0)
     {
         throwNativeException(env, "Native instance memory limit must be positive");
@@ -1715,9 +2131,13 @@ jlong createInstanceImpl(
     }
 
     auto instance = std::make_unique<NativeScriptInstance>(
+        env,
         rootModuleName,
         std::move(moduleBytecodes),
+        hostRegistry,
         static_cast<size_t>(maxMemoryBytes));
+    if (env->ExceptionCheck())
+        return 0;
     if (!instance->valid())
     {
         throwNativeException(env, "Failed to create a Luau VM within its memory limit");
@@ -1729,8 +2149,11 @@ jlong createInstanceImpl(
 jobject executeInstanceImpl(
     JNIEnv* env,
     jlong handle,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
 
@@ -1746,9 +2169,17 @@ jobject executeInstanceImpl(
         throwNativeException(env, "Script instance is faulted");
         return nullptr;
     }
-    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0)
+    if (hostContext == nullptr)
     {
-        throwNativeException(env, "Native execution limits must be positive");
+        throwNativeException(env, "Native host call context must not be null");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 ||
+        maxInterruptChecks <= 0 ||
+        maxHostCalls < 0 ||
+        maxHostOutputBytes < 0)
+    {
+        throwNativeException(env, "Native execution limits are invalid");
         return nullptr;
     }
 
@@ -1757,6 +2188,7 @@ jobject executeInstanceImpl(
     const auto rootBytecode =
         instance->moduleBytecodes.find(instance->rootModuleName);
     instance->loadingModules.insert(instance->rootModuleName);
+    instance->currentHostContext = hostContext;
     jobject result = executeChunk(
         env,
         instance->thread,
@@ -1764,7 +2196,10 @@ jobject executeInstanceImpl(
         instance->rootModuleName,
         rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks));
+        static_cast<uint64_t>(maxInterruptChecks),
+        static_cast<uint64_t>(maxHostCalls),
+        static_cast<uint64_t>(maxHostOutputBytes));
+    instance->currentHostContext = nullptr;
     instance->loadingModules.erase(instance->rootModuleName);
     if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
         instance->faulted = true;
@@ -1774,8 +2209,11 @@ jobject executeInstanceImpl(
 jobject initializeInstanceImpl(
     JNIEnv* env,
     jlong handle,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
 
@@ -1786,9 +2224,17 @@ jobject initializeInstanceImpl(
         throwNativeException(env, "Script instance cannot be initialized in its current state");
         return nullptr;
     }
-    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0)
+    if (hostContext == nullptr)
     {
-        throwNativeException(env, "Native execution limits must be positive");
+        throwNativeException(env, "Native host call context must not be null");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 ||
+        maxInterruptChecks <= 0 ||
+        maxHostCalls < 0 ||
+        maxHostOutputBytes < 0)
+    {
+        throwNativeException(env, "Native execution limits are invalid");
         return nullptr;
     }
 
@@ -1797,6 +2243,7 @@ jobject initializeInstanceImpl(
     const auto rootBytecode =
         instance->moduleBytecodes.find(instance->rootModuleName);
     instance->loadingModules.insert(instance->rootModuleName);
+    instance->currentHostContext = hostContext;
     jobject result = executeChunk(
         env,
         instance->thread,
@@ -1805,8 +2252,11 @@ jobject initializeInstanceImpl(
         rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
         static_cast<uint64_t>(maxInterruptChecks),
+        static_cast<uint64_t>(maxHostCalls),
+        static_cast<uint64_t>(maxHostOutputBytes),
         true,
         &instance->exportsRef);
+    instance->currentHostContext = nullptr;
     instance->loadingModules.erase(instance->rootModuleName);
     if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
         instance->faulted = true;
@@ -1820,8 +2270,11 @@ jobject invokeExportImpl(
     jlong handle,
     jbyteArray exportNameUtf8,
     jobjectArray arguments,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
 
@@ -1832,9 +2285,17 @@ jobject invokeExportImpl(
         throwNativeException(env, "Script instance cannot invoke exports in its current state");
         return nullptr;
     }
-    if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0)
+    if (hostContext == nullptr)
     {
-        throwNativeException(env, "Native execution limits must be positive");
+        throwNativeException(env, "Native host call context must not be null");
+        return nullptr;
+    }
+    if (maxRuntimeNanos <= 0 ||
+        maxInterruptChecks <= 0 ||
+        maxHostCalls < 0 ||
+        maxHostOutputBytes < 0)
+    {
+        throwNativeException(env, "Native execution limits are invalid");
         return nullptr;
     }
 
@@ -1889,6 +2350,10 @@ jobject invokeExportImpl(
     ExecutionContext& context = instance->context;
     context.interruptChecks = 0;
     context.maxInterruptChecks = static_cast<uint64_t>(maxInterruptChecks);
+    context.hostCalls = 0;
+    context.maxHostCalls = static_cast<uint64_t>(maxHostCalls);
+    context.hostOutputBytes = 0;
+    context.maxHostOutputBytes = static_cast<uint64_t>(maxHostOutputBytes);
     context.exceededLimit = EXECUTION_COMPLETED;
     context.lastStatus = EXECUTION_COMPLETED;
     lua_callbacks(instance->thread)->interrupt = executionInterrupt;
@@ -1896,13 +2361,20 @@ jobject invokeExportImpl(
     context.deadline =
         context.startedAt + std::chrono::nanoseconds(static_cast<int64_t>(maxRuntimeNanos));
 
+    instance->currentHostContext = hostContext;
     const int executionStatus =
         lua_pcall(instance->thread, argumentCount, LUA_MULTRET, 0);
+    instance->currentHostContext = nullptr;
     const auto finishedAt = std::chrono::steady_clock::now();
     const uint64_t elapsedNanos = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(finishedAt - context.startedAt).count());
 
-    if (executionStatus != LUA_OK)
+    if (finishedAt >= context.deadline &&
+        context.exceededLimit == EXECUTION_COMPLETED)
+        context.exceededLimit = EXECUTION_RUNTIME_LIMIT;
+
+    if (executionStatus != LUA_OK ||
+        context.exceededLimit != EXECUTION_COMPLETED)
     {
         int status = EXECUTION_RUNTIME_FAILED;
         if (context.exceededLimit != EXECUTION_COMPLETED)
@@ -1919,6 +2391,12 @@ jobject invokeExportImpl(
             message = "Luau execution exceeded its interrupt-check budget";
         else if (status == EXECUTION_MEMORY_LIMIT)
             message = "Luau execution exceeded its VM memory limit";
+        else if (status == EXECUTION_VALUE_LIMIT)
+            message = "Luau execution exceeded its value-codec budget";
+        else if (status == EXECUTION_HOST_CALL_LIMIT)
+            message = "Luau execution exceeded its host-call budget";
+        else if (status == EXECUTION_HOST_OUTPUT_LIMIT)
+            message = "Luau execution exceeded its host-output budget";
         return newNativeExecutionResult(
             env,
             status,
@@ -2008,8 +2486,12 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
     jbyteArray rootModuleNameUtf8,
     jobjectArray moduleNamesUtf8,
     jobjectArray bytecodeArrays,
+    jobject hostRegistry,
+    jobject hostContext,
     jlong maxRuntimeNanos,
     jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
@@ -2023,8 +2505,12 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
                 rootModuleNameUtf8,
                 moduleNamesUtf8,
                 bytecodeArrays,
+                hostRegistry,
+                hostContext,
                 maxRuntimeNanos,
                 maxInterruptChecks,
+                maxHostCalls,
+                maxHostOutputBytes,
                 maxMemoryBytes);
         });
 }
@@ -2036,6 +2522,7 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
     jbyteArray rootModuleNameUtf8,
     jobjectArray moduleNamesUtf8,
     jobjectArray bytecodeArrays,
+    jobject hostRegistry,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
@@ -2046,6 +2533,7 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
             rootModuleNameUtf8,
             moduleNamesUtf8,
             bytecodeArrays,
+            hostRegistry,
             maxMemoryBytes);
     }
     catch (const std::exception& exception)
@@ -2066,8 +2554,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
     JNIEnv* env,
     jclass,
     jlong handle,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
     return guardNativeCall<jobject>(
@@ -2077,8 +2568,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
             return executeInstanceImpl(
                 env,
                 handle,
+                hostContext,
                 maxRuntimeNanos,
-                maxInterruptChecks);
+                maxInterruptChecks,
+                maxHostCalls,
+                maxHostOutputBytes);
         });
 }
 
@@ -2087,8 +2581,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
     JNIEnv* env,
     jclass,
     jlong handle,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
     return guardNativeCall<jobject>(
@@ -2098,8 +2595,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
             return initializeInstanceImpl(
                 env,
                 handle,
+                hostContext,
                 maxRuntimeNanos,
-                maxInterruptChecks);
+                maxInterruptChecks,
+                maxHostCalls,
+                maxHostOutputBytes);
         });
 }
 
@@ -2110,8 +2610,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
     jlong handle,
     jbyteArray exportNameUtf8,
     jobjectArray arguments,
+    jobject hostContext,
     jlong maxRuntimeNanos,
-    jlong maxInterruptChecks)
+    jlong maxInterruptChecks,
+    jlong maxHostCalls,
+    jlong maxHostOutputBytes)
 {
     using namespace suterxom::luau;
     return guardNativeCall<jobject>(
@@ -2123,8 +2626,11 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
                 handle,
                 exportNameUtf8,
                 arguments,
+                hostContext,
                 maxRuntimeNanos,
-                maxInterruptChecks);
+                maxInterruptChecks,
+                maxHostCalls,
+                maxHostOutputBytes);
         });
 }
 

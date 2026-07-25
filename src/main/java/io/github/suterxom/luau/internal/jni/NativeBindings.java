@@ -1,9 +1,10 @@
 package io.github.suterxom.luau.internal.jni;
 
 import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
+import io.github.suterxom.luau.v1.api.host.HostCallContext;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 6;
+  public static final int EXPECTED_ABI_VERSION = 7;
 
   static {
     NativeLibraryLoader.load();
@@ -36,28 +37,46 @@ public final class NativeBindings {
       byte[] rootModuleNameUtf8,
       byte[][] moduleNamesUtf8,
       byte[][] bytecodes,
+      NativeHostRegistry hostRegistry,
+      HostCallContext hostContext,
       long maxRuntimeNanos,
       long maxInterruptChecks,
+      long maxHostCalls,
+      long maxHostOutputBytes,
       long maxMemoryBytes);
 
   public static native long createInstance(
       byte[] rootModuleNameUtf8,
       byte[][] moduleNamesUtf8,
       byte[][] bytecodes,
+      NativeHostRegistry hostRegistry,
       long maxMemoryBytes);
 
   public static native NativeExecutionResult executeInstance(
-      long handle, long maxRuntimeNanos, long maxInterruptChecks);
+      long handle,
+      HostCallContext hostContext,
+      long maxRuntimeNanos,
+      long maxInterruptChecks,
+      long maxHostCalls,
+      long maxHostOutputBytes);
 
   public static native NativeExecutionResult initializeInstance(
-      long handle, long maxRuntimeNanos, long maxInterruptChecks);
+      long handle,
+      HostCallContext hostContext,
+      long maxRuntimeNanos,
+      long maxInterruptChecks,
+      long maxHostCalls,
+      long maxHostOutputBytes);
 
   public static native NativeExecutionResult invokeExport(
       long handle,
       byte[] exportNameUtf8,
       NativeValue[] arguments,
+      HostCallContext hostContext,
       long maxRuntimeNanos,
-      long maxInterruptChecks);
+      long maxInterruptChecks,
+      long maxHostCalls,
+      long maxHostOutputBytes);
 
   public static native void closeInstance(long handle);
 }

@@ -39,6 +39,8 @@ public sealed interface ExecutionResult
       RUNTIME,
       INTERRUPT_CHECKS,
       MEMORY,
+      HOST_CALLS,
+      HOST_OUTPUT,
       VALUE_CODEC
     }
   }

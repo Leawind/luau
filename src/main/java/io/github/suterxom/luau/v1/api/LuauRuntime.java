@@ -4,9 +4,12 @@ import io.github.suterxom.luau.internal.jni.NativeBindings;
 import io.github.suterxom.luau.internal.jni.NativeCompilationDiagnostic;
 import io.github.suterxom.luau.internal.jni.NativeLuauException;
 import io.github.suterxom.luau.internal.loader.NativePlatform;
+import io.github.suterxom.luau.internal.validation.ModuleNames;
 import io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic;
 import io.github.suterxom.luau.v1.api.compile.CompilationResult;
+import io.github.suterxom.luau.v1.api.host.HostModule;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +19,6 @@ import java.util.TreeMap;
 /** Entry point for compiling and executing sandboxed Luau code. */
 public final class LuauRuntime {
   private static final int MAX_MODULES = 64;
-  private static final int MAX_MODULE_NAME_BYTES = 256;
   private static final int MAX_SOURCE_BYTES = 1024 * 1024;
   private static final int MAX_TOTAL_SOURCE_BYTES = 4 * 1024 * 1024;
   private static final LuauRuntime INSTANCE = new LuauRuntime();
@@ -50,7 +52,7 @@ public final class LuauRuntime {
    * throw {@link IllegalArgumentException}.
    */
   public CompilationResult compile(String chunkName, String source) {
-    validateModuleName(chunkName);
+    ModuleNames.requireValid(chunkName);
     Objects.requireNonNull(source, "source");
     return compile(chunkName, Map.of(chunkName, source));
   }
@@ -62,14 +64,29 @@ public final class LuauRuntime {
    * logical identifiers and never resolve through the filesystem or a search path.
    */
   public CompilationResult compile(String rootModuleName, Map<String, String> sources) {
-    validateModuleName(rootModuleName);
+    return compile(rootModuleName, sources, List.of());
+  }
+
+  /**
+   * Compiles source modules with an explicit set of typed host modules.
+   *
+   * <p>A host module declaration participates in strict type checking under its exact logical
+   * module name. Its factory is retained for later per-instance export creation and is not invoked
+   * during compilation.
+   */
+  public CompilationResult compile(
+      String rootModuleName,
+      Map<String, String> sources,
+      List<HostModule> hostModules) {
+    ModuleNames.requireValid(rootModuleName);
     Objects.requireNonNull(sources, "sources");
+    Objects.requireNonNull(hostModules, "hostModules");
     if (sources.isEmpty()) {
       throw new IllegalArgumentException("At least one source module is required");
     }
-    if (sources.size() > MAX_MODULES) {
+    if (sources.size() + hostModules.size() > MAX_MODULES) {
       throw new IllegalArgumentException(
-          "Program exceeds the " + MAX_MODULES + " source module limit");
+          "Program exceeds the " + MAX_MODULES + " total module limit");
     }
 
     Map<String, String> sortedSources = new TreeMap<>();
@@ -77,8 +94,8 @@ public final class LuauRuntime {
     for (Map.Entry<String, String> entry : sources.entrySet()) {
       String moduleName = Objects.requireNonNull(entry.getKey(), "module name");
       String source = Objects.requireNonNull(entry.getValue(), "source");
-      validateModuleName(moduleName);
-      requireWellFormedUnicode(source, "source for module " + moduleName);
+      ModuleNames.requireValid(moduleName);
+      ModuleNames.requireWellFormedUnicode(source, "source for module " + moduleName);
 
       byte[] sourceUtf8 = source.getBytes(StandardCharsets.UTF_8);
       if (sourceUtf8.length > MAX_SOURCE_BYTES) {
@@ -101,6 +118,33 @@ public final class LuauRuntime {
           "Root module is not present in the source set: " + rootModuleName);
     }
 
+    Map<String, HostModule> sortedHostModules = new TreeMap<>();
+    for (HostModule module : hostModules) {
+      Objects.requireNonNull(module, "hostModule");
+      if (sortedSources.containsKey(module.name())) {
+        throw new IllegalArgumentException(
+            "Source and host modules use the same name: " + module.name());
+      }
+      if (sortedHostModules.putIfAbsent(module.name(), module) != null) {
+        throw new IllegalArgumentException("Duplicate host module: " + module.name());
+      }
+
+      byte[] declarationUtf8 = module.typeDeclaration().getBytes(StandardCharsets.UTF_8);
+      if (declarationUtf8.length > MAX_SOURCE_BYTES) {
+        throw new IllegalArgumentException(
+            "Host module declaration "
+                + module.name()
+                + " exceeds the "
+                + MAX_SOURCE_BYTES
+                + " byte limit");
+      }
+      if (totalSourceBytes > MAX_TOTAL_SOURCE_BYTES - declarationUtf8.length) {
+        throw new IllegalArgumentException(
+            "Program exceeds the " + MAX_TOTAL_SOURCE_BYTES + " total source byte limit");
+      }
+      totalSourceBytes += declarationUtf8.length;
+    }
+
     byte[] rootNameUtf8 = rootModuleName.getBytes(StandardCharsets.UTF_8);
     byte[][] moduleNamesUtf8 = new byte[sortedSources.size()][];
     byte[][] sourcesUtf8 = new byte[sortedSources.size()][];
@@ -111,9 +155,22 @@ public final class LuauRuntime {
       ++index;
     }
 
+    Map<String, String> typecheckSources = new TreeMap<>(sortedSources);
+    sortedHostModules.forEach(
+        (name, module) -> typecheckSources.put(name, module.typeDeclaration()));
+    byte[][] typecheckNamesUtf8 = new byte[typecheckSources.size()][];
+    byte[][] typecheckSourcesUtf8 = new byte[typecheckSources.size()][];
+    index = 0;
+    for (Map.Entry<String, String> entry : typecheckSources.entrySet()) {
+      typecheckNamesUtf8[index] = entry.getKey().getBytes(StandardCharsets.UTF_8);
+      typecheckSourcesUtf8[index] = entry.getValue().getBytes(StandardCharsets.UTF_8);
+      ++index;
+    }
+
     try {
       NativeCompilationDiagnostic[] nativeDiagnostics =
-          NativeBindings.typecheckModules(rootNameUtf8, moduleNamesUtf8, sourcesUtf8);
+          NativeBindings.typecheckModules(
+              rootNameUtf8, typecheckNamesUtf8, typecheckSourcesUtf8);
       if (nativeDiagnostics.length > 0) {
         return CompilationResult.failure(
             Arrays.stream(nativeDiagnostics).map(LuauRuntime::decodeDiagnostic).toList());
@@ -131,7 +188,12 @@ public final class LuauRuntime {
         }
       }
       return CompilationResult.success(
-          new CompiledChunk(this, rootModuleName, moduleNamesUtf8, bytecodes));
+          new CompiledChunk(
+              this,
+              rootModuleName,
+              moduleNamesUtf8,
+              bytecodes,
+              new ArrayList<>(sortedHostModules.values())));
     } catch (NativeLuauException exception) {
       return CompilationResult.failure(
           List.of(
@@ -150,52 +212,5 @@ public final class LuauRuntime {
       default -> throw new LinkageError(
           "Unknown native compilation diagnostic stage: " + diagnostic.stage());
     };
-  }
-
-  private static void validateModuleName(String moduleName) {
-    Objects.requireNonNull(moduleName, "moduleName");
-    requireWellFormedUnicode(moduleName, "moduleName");
-    byte[] nameUtf8 = moduleName.getBytes(StandardCharsets.UTF_8);
-    if (moduleName.isBlank()) {
-      throw new IllegalArgumentException("Module name must not be blank");
-    }
-    if (nameUtf8.length > MAX_MODULE_NAME_BYTES) {
-      throw new IllegalArgumentException(
-          "Module name exceeds " + MAX_MODULE_NAME_BYTES + " UTF-8 bytes");
-    }
-    if (moduleName.indexOf('\0') >= 0) {
-      throw new IllegalArgumentException("Module name must not contain NUL");
-    }
-    if (moduleName.indexOf('\\') >= 0) {
-      throw new IllegalArgumentException("Module name must not contain backslashes");
-    }
-    for (int index = 0; index < moduleName.length(); ++index) {
-      char character = moduleName.charAt(index);
-      if (Character.isWhitespace(character) || Character.isISOControl(character)) {
-        throw new IllegalArgumentException(
-            "Module name must not contain whitespace or control characters");
-      }
-    }
-    for (String segment : moduleName.split("/", -1)) {
-      if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
-        throw new IllegalArgumentException(
-            "Module name must use non-empty logical segments other than '.' or '..'");
-      }
-    }
-  }
-
-  private static void requireWellFormedUnicode(String value, String name) {
-    for (int index = 0; index < value.length(); ++index) {
-      char character = value.charAt(index);
-      if (Character.isHighSurrogate(character)) {
-        if (index + 1 >= value.length()
-            || !Character.isLowSurrogate(value.charAt(index + 1))) {
-          throw new IllegalArgumentException(name + " contains an unpaired UTF-16 surrogate");
-        }
-        ++index;
-      } else if (Character.isLowSurrogate(character)) {
-        throw new IllegalArgumentException(name + " contains an unpaired UTF-16 surrogate");
-      }
-    }
   }
 }

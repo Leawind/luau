@@ -32,7 +32,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(6, info.jniAbiVersion());
+    assertEquals(7, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }

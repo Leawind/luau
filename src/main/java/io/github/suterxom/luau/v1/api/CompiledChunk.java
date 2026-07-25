@@ -2,8 +2,11 @@ package io.github.suterxom.luau.v1.api;
 
 import io.github.suterxom.luau.internal.jni.NativeBindings;
 import io.github.suterxom.luau.internal.jni.NativeExecutionResult;
+import io.github.suterxom.luau.internal.jni.NativeHostRegistry;
 import io.github.suterxom.luau.internal.jni.NativeLuauException;
 import io.github.suterxom.luau.internal.jni.NativeValueCodec;
+import io.github.suterxom.luau.v1.api.host.HostCallContext;
+import io.github.suterxom.luau.v1.api.host.HostModule;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionMetrics;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
@@ -11,7 +14,10 @@ import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -24,13 +30,17 @@ public final class CompiledChunk implements AutoCloseable {
   private final byte[] rootModuleNameUtf8;
   private final byte[][] moduleNamesUtf8;
   private final Set<String> moduleNames;
+  private final List<HostModule> hostModules;
+  private final Set<String> hostModuleNames;
+  private final Map<String, String> hostModuleVersions;
   private byte[][] bytecodes;
 
   CompiledChunk(
       LuauRuntime runtime,
       String chunkName,
       byte[][] moduleNamesUtf8,
-      byte[][] bytecodes) {
+      byte[][] bytecodes,
+      List<HostModule> hostModules) {
     this.runtime = Objects.requireNonNull(runtime, "runtime");
     this.chunkName = Objects.requireNonNull(chunkName, "chunkName");
     this.rootModuleNameUtf8 = chunkName.getBytes(StandardCharsets.UTF_8);
@@ -44,6 +54,16 @@ public final class CompiledChunk implements AutoCloseable {
       names.add(new String(moduleName, StandardCharsets.UTF_8));
     }
     this.moduleNames = Set.copyOf(names);
+    this.hostModules = List.copyOf(Objects.requireNonNull(hostModules, "hostModules"));
+    LinkedHashSet<String> hostNames = new LinkedHashSet<>();
+    LinkedHashMap<String, String> hostVersions = new LinkedHashMap<>();
+    this.hostModules.forEach(
+        module -> {
+          hostNames.add(module.name());
+          hostVersions.put(module.name(), module.interfaceVersion());
+        });
+    this.hostModuleNames = Set.copyOf(hostNames);
+    this.hostModuleVersions = Map.copyOf(hostVersions);
   }
 
   /** Returns the logical name of the root module. */
@@ -56,16 +76,38 @@ public final class CompiledChunk implements AutoCloseable {
     return moduleNames;
   }
 
+  /** Returns all explicitly granted host module names. */
+  public Set<String> hostModuleNames() {
+    return hostModuleNames;
+  }
+
+  /** Returns the interface version retained for each explicitly granted host module. */
+  public Map<String, String> hostModuleVersions() {
+    return hostModuleVersions;
+  }
+
   /** Executes the root module in a fresh isolated and sandboxed Luau state. */
   public synchronized ExecutionResult execute() {
-    return execute(ExecutionBudget.DEFAULT);
+    return execute(HostCallContext.empty(), ExecutionBudget.DEFAULT);
   }
 
   /** Executes the root module with explicit wall-clock and interrupt-check limits. */
   public synchronized ExecutionResult execute(ExecutionBudget budget) {
+    return execute(HostCallContext.empty(), budget);
+  }
+
+  /** Executes the root module with Java-only host capabilities and default limits. */
+  public synchronized ExecutionResult execute(HostCallContext hostContext) {
+    return execute(hostContext, ExecutionBudget.DEFAULT);
+  }
+
+  /** Executes the root module with explicit host capabilities and resource limits. */
+  public synchronized ExecutionResult execute(
+      HostCallContext hostContext, ExecutionBudget budget) {
     if (bytecodes == null) {
       throw new IllegalStateException("Compiled chunk is closed");
     }
+    Objects.requireNonNull(hostContext, "hostContext");
     Objects.requireNonNull(budget, "budget");
 
     try {
@@ -74,8 +116,12 @@ public final class CompiledChunk implements AutoCloseable {
               rootModuleNameUtf8,
               moduleNamesUtf8,
               bytecodes,
+              NativeHostRegistry.create(hostModules),
+              hostContext,
               budget.maxRuntimeNanos(),
               budget.maxInterruptChecks(),
+              budget.maxHostCalls(),
+              budget.maxHostOutputBytes(),
               DEFAULT_MAX_MEMORY_BYTES);
       return decodeExecutionResult(result);
     } catch (NativeLuauException exception) {
@@ -95,7 +141,11 @@ public final class CompiledChunk implements AutoCloseable {
     }
     Objects.requireNonNull(config, "config");
     return new ScriptInstance(
-        rootModuleNameUtf8, moduleNamesUtf8, bytecodes, config.maxMemoryBytes());
+        rootModuleNameUtf8,
+        moduleNamesUtf8,
+        bytecodes,
+        hostModules,
+        config.maxMemoryBytes());
   }
 
   static ExecutionResult decodeExecutionResult(NativeExecutionResult result) {
@@ -104,7 +154,9 @@ public final class CompiledChunk implements AutoCloseable {
             Duration.ofNanos(result.elapsedNanos()),
             result.interruptChecks(),
             result.currentMemoryBytes(),
-            result.peakMemoryBytes());
+            result.peakMemoryBytes(),
+            result.hostCalls(),
+            result.hostOutputBytes());
     String message =
         result.messageUtf8() == null
             ? ""
@@ -127,6 +179,12 @@ public final class CompiledChunk implements AutoCloseable {
       case 6 ->
           new ExecutionResult.LimitExceeded(
               ExecutionResult.LimitExceeded.Kind.VALUE_CODEC, message, metrics);
+      case 7 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.HOST_CALLS, message, metrics);
+      case 8 ->
+          new ExecutionResult.LimitExceeded(
+              ExecutionResult.LimitExceeded.Kind.HOST_OUTPUT, message, metrics);
       default -> throw new LinkageError("Unknown native execution status: " + result.status());
     };
   }

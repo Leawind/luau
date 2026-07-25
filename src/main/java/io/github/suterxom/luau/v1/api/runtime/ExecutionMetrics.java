@@ -8,13 +8,17 @@ public record ExecutionMetrics(
     Duration runtime,
     long interruptChecks,
     long currentMemoryBytes,
-    long peakMemoryBytes) {
+    long peakMemoryBytes,
+    long hostCalls,
+    long hostOutputBytes) {
   public ExecutionMetrics {
     Objects.requireNonNull(runtime, "runtime");
     if (runtime.isNegative()
         || interruptChecks < 0
         || currentMemoryBytes < 0
-        || peakMemoryBytes < currentMemoryBytes) {
+        || peakMemoryBytes < currentMemoryBytes
+        || hostCalls < 0
+        || hostOutputBytes < 0) {
       throw new IllegalArgumentException("Execution metrics must be non-negative and consistent");
     }
   }

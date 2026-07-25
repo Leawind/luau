@@ -23,6 +23,11 @@ public record CompilationDiagnostic(
         Stage.TYPE, Severity.ERROR, "LUAU_TYPE_ERROR", moduleName, message);
   }
 
+  public static CompilationDiagnostic parseError(String moduleName, String message) {
+    return new CompilationDiagnostic(
+        Stage.PARSE, Severity.ERROR, "LUAU_PARSE_ERROR", moduleName, message);
+  }
+
   public enum Stage {
     PARSE,
     TYPE,

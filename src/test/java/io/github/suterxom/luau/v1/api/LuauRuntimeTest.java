@@ -32,7 +32,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(5, info.jniAbiVersion());
+    assertEquals(6, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
@@ -68,8 +68,16 @@ class LuauRuntimeTest {
 
     assertFalse(compilation.successful());
     assertTrue(compilation.chunk().isEmpty());
-    assertEquals(1, compilation.diagnostics().size());
-    assertEquals("broken", compilation.diagnostics().get(0).moduleName());
+    assertFalse(compilation.diagnostics().isEmpty());
+    assertTrue(
+        compilation.diagnostics().stream()
+            .allMatch(diagnostic -> diagnostic.moduleName().equals("broken")));
+    assertTrue(
+        compilation.diagnostics().stream()
+            .allMatch(
+                diagnostic ->
+                    diagnostic.stage()
+                        == io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic.Stage.PARSE));
   }
 
   @Test

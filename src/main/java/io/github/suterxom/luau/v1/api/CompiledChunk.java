@@ -11,34 +11,59 @@ import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 
-/** An opaque, trusted bytecode chunk produced by this runtime. */
+/** An opaque compiled program containing a trusted root chunk and its source modules. */
 public final class CompiledChunk implements AutoCloseable {
   private static final long DEFAULT_MAX_MEMORY_BYTES = 64L * 1024 * 1024;
 
   private final LuauRuntime runtime;
   private final String chunkName;
-  private byte[] bytecode;
+  private final byte[] rootModuleNameUtf8;
+  private final byte[][] moduleNamesUtf8;
+  private final Set<String> moduleNames;
+  private byte[][] bytecodes;
 
-  CompiledChunk(LuauRuntime runtime, String chunkName, byte[] bytecode) {
+  CompiledChunk(
+      LuauRuntime runtime,
+      String chunkName,
+      byte[][] moduleNamesUtf8,
+      byte[][] bytecodes) {
     this.runtime = Objects.requireNonNull(runtime, "runtime");
     this.chunkName = Objects.requireNonNull(chunkName, "chunkName");
-    this.bytecode = Objects.requireNonNull(bytecode, "bytecode").clone();
+    this.rootModuleNameUtf8 = chunkName.getBytes(StandardCharsets.UTF_8);
+    this.moduleNamesUtf8 = deepClone(moduleNamesUtf8, "moduleNamesUtf8");
+    this.bytecodes = deepClone(bytecodes, "bytecodes");
+    if (this.moduleNamesUtf8.length != this.bytecodes.length) {
+      throw new IllegalArgumentException("Module name and bytecode counts must match");
+    }
+    LinkedHashSet<String> names = new LinkedHashSet<>();
+    for (byte[] moduleName : this.moduleNamesUtf8) {
+      names.add(new String(moduleName, StandardCharsets.UTF_8));
+    }
+    this.moduleNames = Set.copyOf(names);
   }
 
+  /** Returns the logical name of the root module. */
   public String chunkName() {
     return chunkName;
   }
 
-  /** Executes this chunk in a fresh isolated and sandboxed Luau state. */
+  /** Returns all source modules embedded in this compiled program. */
+  public Set<String> moduleNames() {
+    return moduleNames;
+  }
+
+  /** Executes the root module in a fresh isolated and sandboxed Luau state. */
   public synchronized ExecutionResult execute() {
     return execute(ExecutionBudget.DEFAULT);
   }
 
-  /** Executes this chunk with explicit wall-clock and interrupt-check limits. */
+  /** Executes the root module with explicit wall-clock and interrupt-check limits. */
   public synchronized ExecutionResult execute(ExecutionBudget budget) {
-    if (bytecode == null) {
+    if (bytecodes == null) {
       throw new IllegalStateException("Compiled chunk is closed");
     }
     Objects.requireNonNull(budget, "budget");
@@ -46,8 +71,9 @@ public final class CompiledChunk implements AutoCloseable {
     try {
       NativeExecutionResult result =
           NativeBindings.execute(
-              chunkName.getBytes(StandardCharsets.UTF_8),
-              bytecode,
+              rootModuleNameUtf8,
+              moduleNamesUtf8,
+              bytecodes,
               budget.maxRuntimeNanos(),
               budget.maxInterruptChecks(),
               DEFAULT_MAX_MEMORY_BYTES);
@@ -64,11 +90,12 @@ public final class CompiledChunk implements AutoCloseable {
 
   /** Creates an isolated VM with a fixed hard heap limit. */
   public synchronized ScriptInstance createInstance(InstanceConfig config) {
-    if (bytecode == null) {
+    if (bytecodes == null) {
       throw new IllegalStateException("Compiled chunk is closed");
     }
     Objects.requireNonNull(config, "config");
-    return new ScriptInstance(chunkName, bytecode, config.maxMemoryBytes());
+    return new ScriptInstance(
+        rootModuleNameUtf8, moduleNamesUtf8, bytecodes, config.maxMemoryBytes());
   }
 
   static ExecutionResult decodeExecutionResult(NativeExecutionResult result) {
@@ -110,9 +137,20 @@ public final class CompiledChunk implements AutoCloseable {
 
   @Override
   public synchronized void close() {
-    if (bytecode != null) {
-      Arrays.fill(bytecode, (byte) 0);
-      bytecode = null;
+    if (bytecodes != null) {
+      for (byte[] bytecode : bytecodes) {
+        Arrays.fill(bytecode, (byte) 0);
+      }
+      bytecodes = null;
     }
+  }
+
+  private static byte[][] deepClone(byte[][] values, String name) {
+    Objects.requireNonNull(values, name);
+    byte[][] copy = values.clone();
+    for (int index = 0; index < copy.length; ++index) {
+      copy[index] = Objects.requireNonNull(copy[index], name + "[" + index + "]").clone();
+    }
+    return copy;
   }
 }

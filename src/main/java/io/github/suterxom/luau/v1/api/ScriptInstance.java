@@ -2,9 +2,9 @@ package io.github.suterxom.luau.v1.api;
 
 import io.github.suterxom.luau.internal.jni.NativeBindings;
 import io.github.suterxom.luau.internal.jni.NativeValueCodec;
-import io.github.suterxom.luau.v1.api.value.LuauValue;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
+import io.github.suterxom.luau.v1.api.value.LuauValue;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -13,26 +13,36 @@ import java.util.Objects;
 /**
  * An isolated persistent Luau VM.
  *
- * <p>The current API executes the compiled root chunk. Mutable globals survive successful calls.
- * Export invocation will be added on top of this lifecycle without sharing state between instances.
+ * <p>Mutable globals and required-module caches survive successful calls without being shared between
+ * instances.
  */
 public final class ScriptInstance implements AutoCloseable {
   private final Thread ownerThread;
-  private final byte[] chunkNameUtf8;
-  private final byte[] bytecode;
+  private final byte[] rootModuleNameUtf8;
+  private final byte[][] moduleNamesUtf8;
+  private final byte[][] bytecodes;
   private final long maxMemoryBytes;
   private long nativeHandle;
   private boolean faulted;
   private boolean initialized;
 
-  ScriptInstance(String chunkName, byte[] bytecode, long maxMemoryBytes) {
-    this.chunkNameUtf8 =
-        Objects.requireNonNull(chunkName, "chunkName").getBytes(StandardCharsets.UTF_8);
-    this.bytecode = Objects.requireNonNull(bytecode, "bytecode").clone();
+  ScriptInstance(
+      byte[] rootModuleNameUtf8,
+      byte[][] moduleNamesUtf8,
+      byte[][] bytecodes,
+      long maxMemoryBytes) {
+    this.rootModuleNameUtf8 =
+        Objects.requireNonNull(rootModuleNameUtf8, "rootModuleNameUtf8").clone();
+    this.moduleNamesUtf8 = deepClone(moduleNamesUtf8, "moduleNamesUtf8");
+    this.bytecodes = deepClone(bytecodes, "bytecodes");
     this.maxMemoryBytes = maxMemoryBytes;
     this.ownerThread = Thread.currentThread();
     this.nativeHandle =
-        NativeBindings.createInstance(this.chunkNameUtf8, this.bytecode, maxMemoryBytes);
+        NativeBindings.createInstance(
+            this.rootModuleNameUtf8,
+            this.moduleNamesUtf8,
+            this.bytecodes,
+            maxMemoryBytes);
   }
 
   public synchronized ExecutionResult execute() {
@@ -132,7 +142,9 @@ public final class ScriptInstance implements AutoCloseable {
     if (nativeHandle == 0) {
       throw new IllegalStateException("Script instance is closed");
     }
-    long replacement = NativeBindings.createInstance(chunkNameUtf8, bytecode, maxMemoryBytes);
+    long replacement =
+        NativeBindings.createInstance(
+            rootModuleNameUtf8, moduleNamesUtf8, bytecodes, maxMemoryBytes);
     NativeBindings.closeInstance(nativeHandle);
     nativeHandle = replacement;
     faulted = false;
@@ -145,7 +157,9 @@ public final class ScriptInstance implements AutoCloseable {
     if (nativeHandle != 0) {
       NativeBindings.closeInstance(nativeHandle);
       nativeHandle = 0;
-      Arrays.fill(bytecode, (byte) 0);
+      for (byte[] bytecode : bytecodes) {
+        Arrays.fill(bytecode, (byte) 0);
+      }
     }
   }
 
@@ -170,5 +184,14 @@ public final class ScriptInstance implements AutoCloseable {
       throw new IllegalArgumentException(
           "Export name must be non-blank, at most 256 characters, and contain no NUL");
     }
+  }
+
+  private static byte[][] deepClone(byte[][] values, String name) {
+    Objects.requireNonNull(values, name);
+    byte[][] copy = values.clone();
+    for (int index = 0; index < copy.length; ++index) {
+      copy[index] = Objects.requireNonNull(copy[index], name + "[" + index + "]").clone();
+    }
+    return copy;
   }
 }

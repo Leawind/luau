@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Luau/BuiltinDefinitions.h"
+#include "Luau/Ast.h"
 #include "Luau/Config.h"
 #include "Luau/ConfigResolver.h"
 #include "Luau/Error.h"
@@ -126,21 +127,29 @@ struct LuaStateCloser
 using LuaStatePtr = std::unique_ptr<lua_State, LuaStateCloser>;
 using BytecodePtr = std::unique_ptr<char, decltype(&std::free)>;
 
+struct NativeScriptInstance;
+int requireSourceModule(lua_State* state);
+
 struct NativeScriptInstance
 {
     ExecutionContext context;
     LuaStatePtr globalState;
     lua_State* thread = nullptr;
-    std::string chunk;
-    std::string bytecode;
+    std::string rootModuleName;
+    std::unordered_map<std::string, std::string> moduleBytecodes;
+    std::unordered_map<std::string, int> moduleCache;
+    std::unordered_set<std::string> loadingModules;
     bool faulted = false;
     bool initialized = false;
     int exportsRef = -1;
 
-    NativeScriptInstance(std::string chunk, std::string bytecode, size_t maxMemory)
+    NativeScriptInstance(
+        std::string rootModuleName,
+        std::unordered_map<std::string, std::string> moduleBytecodes,
+        size_t maxMemory)
         : globalState(nullptr)
-        , chunk(std::move(chunk))
-        , bytecode(std::move(bytecode))
+        , rootModuleName(std::move(rootModuleName))
+        , moduleBytecodes(std::move(moduleBytecodes))
     {
         context.maxMemory = maxMemory;
         globalState.reset(lua_newstate(limitedAllocate, &context));
@@ -148,40 +157,59 @@ struct NativeScriptInstance
             return;
 
         luaL_openlibs(globalState.get());
+        lua_pushcfunction(globalState.get(), requireSourceModule, "require");
+        lua_setglobal(globalState.get(), "require");
         luaL_sandbox(globalState.get());
         lua_Callbacks* callbacks = lua_callbacks(globalState.get());
         callbacks->userdata = &context;
+        lua_setthreaddata(globalState.get(), this);
 
         thread = lua_newthread(globalState.get());
         if (thread != nullptr)
+        {
             luaL_sandboxthread(thread);
+            lua_setthreaddata(thread, this);
+        }
     }
 
     bool valid() const
     {
-        return globalState != nullptr && thread != nullptr;
+        return globalState != nullptr &&
+            thread != nullptr &&
+            moduleBytecodes.find(rootModuleName) != moduleBytecodes.end();
     }
 };
 
-class SingleSourceResolver final : public Luau::FileResolver
+class InMemorySourceResolver final : public Luau::FileResolver
 {
 public:
-    SingleSourceResolver(std::string moduleName, std::string source)
-        : moduleName(std::move(moduleName))
-        , source(std::move(source))
+    explicit InMemorySourceResolver(
+        std::unordered_map<std::string, std::string> sources)
+        : sources(std::move(sources))
     {
     }
 
     std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& requestedName) override
     {
-        if (requestedName != moduleName)
+        const auto source = sources.find(requestedName);
+        if (source == sources.end())
             return std::nullopt;
-        return Luau::SourceCode{source, Luau::SourceCode::Module};
+        return Luau::SourceCode{source->second, Luau::SourceCode::Module};
+    }
+
+    std::optional<Luau::ModuleInfo> resolveModule(
+        const Luau::ModuleInfo*,
+        Luau::AstExpr* expression,
+        const Luau::TypeCheckLimits&) override
+    {
+        if (const auto* name = expression->as<Luau::AstExprConstantString>())
+            return Luau::ModuleInfo{
+                std::string(name->value.data, name->value.size)};
+        return std::nullopt;
     }
 
 private:
-    std::string moduleName;
-    std::string source;
+    std::unordered_map<std::string, std::string> sources;
 };
 
 class StrictConfigResolver final : public Luau::ConfigResolver
@@ -349,11 +377,177 @@ bool isValidUtf8(std::string_view value)
     return true;
 }
 
+bool readNamedByteArrays(
+    JNIEnv* env,
+    jobjectArray namesUtf8,
+    jobjectArray values,
+    std::unordered_map<std::string, std::string>& output,
+    std::vector<std::string>& orderedNames)
+{
+    if (namesUtf8 == nullptr || values == nullptr)
+    {
+        throwNativeException(env, "Native module arrays must not be null");
+        return false;
+    }
+    const jsize count = env->GetArrayLength(namesUtf8);
+    if (env->ExceptionCheck())
+        return false;
+    if (count <= 0 || count > 64 || env->GetArrayLength(values) != count)
+    {
+        throwNativeException(
+            env,
+            "Native module arrays must have equal lengths between 1 and 64");
+        return false;
+    }
+
+    output.reserve(static_cast<size_t>(count));
+    orderedNames.reserve(static_cast<size_t>(count));
+    for (jsize index = 0; index < count; ++index)
+    {
+        auto nameBytes =
+            static_cast<jbyteArray>(env->GetObjectArrayElement(namesUtf8, index));
+        auto valueBytes =
+            static_cast<jbyteArray>(env->GetObjectArrayElement(values, index));
+        if (env->ExceptionCheck() || nameBytes == nullptr || valueBytes == nullptr)
+        {
+            if (nameBytes != nullptr)
+                env->DeleteLocalRef(nameBytes);
+            if (valueBytes != nullptr)
+                env->DeleteLocalRef(valueBytes);
+            if (!env->ExceptionCheck())
+                throwNativeException(env, "Native module entries must not be null");
+            return false;
+        }
+
+        std::string name = getUtf8Bytes(env, nameBytes);
+        std::string value = getUtf8Bytes(env, valueBytes);
+        env->DeleteLocalRef(nameBytes);
+        env->DeleteLocalRef(valueBytes);
+        if (env->ExceptionCheck())
+            return false;
+        if (name.empty() || name.size() > 256 ||
+            !isValidUtf8(name) ||
+            name.find('\0') != std::string::npos)
+        {
+            throwNativeException(env, "Native module name is invalid");
+            return false;
+        }
+        if (!output.emplace(name, std::move(value)).second)
+        {
+            throwNativeException(env, "Duplicate native module name: " + name);
+            return false;
+        }
+        orderedNames.push_back(std::move(name));
+    }
+    return true;
+}
+
 std::string luaError(lua_State* state)
 {
     size_t length = 0;
     const char* message = lua_tolstring(state, -1, &length);
     return message == nullptr ? "Unknown Luau error" : std::string(message, length);
+}
+
+int requireSourceModule(lua_State* state)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr)
+        luaL_error(state, "%s", "Luau require context is unavailable");
+    if (lua_gettop(state) != 1 || lua_type(state, 1) != LUA_TSTRING)
+        luaL_error(state, "%s", "require expects exactly one string module name");
+
+    size_t nameLength = 0;
+    const char* nameBytes = lua_tolstring(state, 1, &nameLength);
+    const std::string_view nameView(
+        nameBytes == nullptr ? "" : nameBytes,
+        nameLength);
+    if (!isValidUtf8(nameView) ||
+        nameView.find('\0') != std::string_view::npos)
+    {
+        luaL_error(
+            state,
+            "%s",
+            "require module name must be valid UTF-8 without NUL");
+    }
+    const std::string moduleName(nameView);
+
+    if (const auto cached = instance->moduleCache.find(moduleName);
+        cached != instance->moduleCache.end())
+    {
+        lua_getref(state, cached->second);
+        return 1;
+    }
+    if (instance->loadingModules.find(moduleName) !=
+        instance->loadingModules.end())
+    {
+        const std::string message =
+            "Circular module dependency while requiring: " + moduleName;
+        luaL_error(state, "%s", message.c_str());
+    }
+
+    const auto module = instance->moduleBytecodes.find(moduleName);
+    if (module == instance->moduleBytecodes.end())
+    {
+        const std::string message =
+            "Module is not registered in this program: " + moduleName;
+        luaL_error(state, "%s", message.c_str());
+    }
+
+    instance->loadingModules.insert(moduleName);
+    lua_State* globalState = lua_mainthread(state);
+    lua_State* moduleThread = lua_newthread(globalState);
+    lua_xmove(globalState, state, 1);
+    luaL_sandboxthread(moduleThread);
+    lua_setthreaddata(moduleThread, instance);
+
+    const int loadStatus =
+        luau_load(
+            moduleThread,
+            moduleName.c_str(),
+            module->second.data(),
+            module->second.size(),
+            0);
+    if (loadStatus != LUA_OK)
+    {
+        const std::string errorMessage =
+            "Failed to load required module " + moduleName + ": " +
+            luaError(moduleThread);
+        instance->loadingModules.erase(moduleName);
+        lua_pop(state, 1);
+        luaL_error(state, "%s", errorMessage.c_str());
+    }
+
+    const int executionStatus = lua_resume(moduleThread, state, 0);
+    if (executionStatus != LUA_OK)
+    {
+        std::string errorMessage;
+        if (executionStatus == LUA_YIELD)
+            errorMessage = "Required module cannot yield: " + moduleName;
+        else
+            errorMessage =
+                "Error while running required module " + moduleName + ": " +
+                luaError(moduleThread);
+        instance->loadingModules.erase(moduleName);
+        lua_pop(state, 1);
+        luaL_error(state, "%s", errorMessage.c_str());
+    }
+    if (lua_gettop(moduleThread) != 1)
+    {
+        const std::string errorMessage =
+            "Required module must return exactly one value: " + moduleName;
+        instance->loadingModules.erase(moduleName);
+        lua_pop(state, 1);
+        luaL_error(state, "%s", errorMessage.c_str());
+    }
+
+    instance->loadingModules.erase(moduleName);
+    lua_xmove(moduleThread, state, 1);
+    lua_remove(state, -2);
+    const int reference = lua_ref(state, -1);
+    instance->moduleCache.emplace(moduleName, reference);
+    return 1;
 }
 
 jobject newNativeValue(
@@ -1270,17 +1464,31 @@ jbyteArray compileImpl(
 jobjectArray typecheckImpl(
     JNIEnv* env,
     jclass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray sourceUtf8)
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray sourcesUtf8)
 {
     using namespace suterxom::luau;
 
-    const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
-    const std::string source = getUtf8Bytes(env, sourceUtf8);
-    if (env->ExceptionCheck())
+    const std::string rootModuleName =
+        getUtf8Bytes(env, rootModuleNameUtf8);
+    std::unordered_map<std::string, std::string> sources;
+    std::vector<std::string> orderedNames;
+    if (env->ExceptionCheck() ||
+        !readNamedByteArrays(
+            env,
+            moduleNamesUtf8,
+            sourcesUtf8,
+            sources,
+            orderedNames))
         return nullptr;
+    if (sources.find(rootModuleName) == sources.end())
+    {
+        throwNativeException(env, "Root module is not present in native source set");
+        return nullptr;
+    }
 
-    SingleSourceResolver fileResolver(chunk, source);
+    InMemorySourceResolver fileResolver(std::move(sources));
     StrictConfigResolver configResolver;
     Luau::FrontendOptions options;
     options.retainFullTypeGraphs = false;
@@ -1292,119 +1500,214 @@ jobjectArray typecheckImpl(
     Luau::registerBuiltinGlobals(frontend, frontend.globals);
     Luau::freeze(frontend.globals.globalTypes);
 
-    Luau::CheckResult checkResult = frontend.check(chunk);
-    std::vector<std::string> messages;
-    messages.reserve(checkResult.errors.size() + checkResult.timeoutHits.size());
-
-    for (const Luau::TypeError& error : checkResult.errors)
+    struct Diagnostic
     {
-        const Luau::Location& location = error.location;
-        messages.push_back(
-            std::to_string(location.begin.line + 1) + ":" +
-            std::to_string(location.begin.column + 1) + ": " +
-            Luau::toString(error, Luau::TypeErrorToStringOptions{&fileResolver}));
+        int stage;
+        std::string moduleName;
+        std::string message;
+    };
+    std::vector<Diagnostic> diagnostics;
+    std::unordered_set<std::string> seenDiagnostics;
+    std::vector<std::string> namesToCheck;
+    namesToCheck.reserve(orderedNames.size());
+    namesToCheck.push_back(rootModuleName);
+    for (const std::string& moduleName : orderedNames)
+    {
+        if (moduleName != rootModuleName)
+            namesToCheck.push_back(moduleName);
     }
-    for (const Luau::ModuleName& timedOutModule : checkResult.timeoutHits)
-        messages.push_back("Type checking timed out for module " + timedOutModule);
 
-    jclass byteArrayClass = env->FindClass("[B");
-    if (byteArrayClass == nullptr)
+    for (const std::string& checkedName : namesToCheck)
+    {
+        Luau::CheckResult checkResult = frontend.check(checkedName);
+        for (const Luau::TypeError& error : checkResult.errors)
+        {
+            const Luau::Location& location = error.location;
+            const int stage =
+                Luau::get<Luau::SyntaxError>(error) == nullptr ? 1 : 0;
+            const std::string moduleName =
+                error.moduleName.empty() ? checkedName : error.moduleName;
+            const std::string message =
+                std::to_string(location.begin.line + 1) + ":" +
+                std::to_string(location.begin.column + 1) + ": " +
+                Luau::toString(
+                    error,
+                    Luau::TypeErrorToStringOptions{&fileResolver});
+            const std::string key =
+                std::to_string(stage) + "\n" + moduleName + "\n" + message;
+            if (seenDiagnostics.insert(key).second)
+                diagnostics.push_back({stage, moduleName, message});
+        }
+        for (const Luau::ModuleName& timedOutModule : checkResult.timeoutHits)
+        {
+            const std::string message =
+                "Type checking timed out for module " + timedOutModule;
+            const std::string key = "1\n" + timedOutModule + "\n" + message;
+            if (seenDiagnostics.insert(key).second)
+                diagnostics.push_back({1, timedOutModule, message});
+        }
+    }
+
+    jclass diagnosticClass = env->FindClass(
+        "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
+    if (diagnosticClass == nullptr)
         return nullptr;
+    jmethodID constructor =
+        env->GetMethodID(diagnosticClass, "<init>", "(I[B[B)V");
+    if (constructor == nullptr)
+    {
+        env->DeleteLocalRef(diagnosticClass);
+        return nullptr;
+    }
     jobjectArray result =
-        env->NewObjectArray(static_cast<jsize>(messages.size()), byteArrayClass, nullptr);
+        env->NewObjectArray(
+            static_cast<jsize>(diagnostics.size()),
+            diagnosticClass,
+            nullptr);
     if (result == nullptr)
-        return nullptr;
-
-    for (size_t index = 0; index < messages.size(); ++index)
     {
-        jbyteArray message = newByteArray(env, messages[index]);
-        if (message == nullptr)
-            return nullptr;
-        env->SetObjectArrayElement(result, static_cast<jsize>(index), message);
-        env->DeleteLocalRef(message);
+        env->DeleteLocalRef(diagnosticClass);
+        return nullptr;
     }
+
+    for (size_t index = 0; index < diagnostics.size(); ++index)
+    {
+        jbyteArray moduleName =
+            newByteArray(env, diagnostics[index].moduleName);
+        jbyteArray message =
+            newByteArray(env, diagnostics[index].message);
+        if (moduleName == nullptr || message == nullptr)
+        {
+            if (moduleName != nullptr)
+                env->DeleteLocalRef(moduleName);
+            if (message != nullptr)
+                env->DeleteLocalRef(message);
+            env->DeleteLocalRef(diagnosticClass);
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+        jobject diagnostic = env->NewObject(
+            diagnosticClass,
+            constructor,
+            static_cast<jint>(diagnostics[index].stage),
+            moduleName,
+            message);
+        env->DeleteLocalRef(moduleName);
+        env->DeleteLocalRef(message);
+        if (diagnostic == nullptr)
+        {
+            env->DeleteLocalRef(diagnosticClass);
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(
+            result,
+            static_cast<jsize>(index),
+            diagnostic);
+        env->DeleteLocalRef(diagnostic);
+        if (env->ExceptionCheck())
+        {
+            env->DeleteLocalRef(diagnosticClass);
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+    }
+    env->DeleteLocalRef(diagnosticClass);
     return result;
 }
 
 jobject executeImpl(
     JNIEnv* env,
     jclass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes,
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray bytecodeArrays,
     jlong maxRuntimeNanos,
     jlong maxInterruptChecks,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
 
-    const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
-    const std::string bytecode = getUtf8Bytes(env, bytecodeBytes);
-    if (env->ExceptionCheck())
+    const std::string rootModuleName =
+        getUtf8Bytes(env, rootModuleNameUtf8);
+    std::unordered_map<std::string, std::string> moduleBytecodes;
+    std::vector<std::string> orderedNames;
+    if (env->ExceptionCheck() ||
+        !readNamedByteArrays(
+            env,
+            moduleNamesUtf8,
+            bytecodeArrays,
+            moduleBytecodes,
+            orderedNames))
         return nullptr;
+    if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
+    {
+        throwNativeException(env, "Root module is not present in native bytecode set");
+        return nullptr;
+    }
     if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxMemoryBytes <= 0)
     {
         throwNativeException(env, "Native execution limits must be positive");
         return nullptr;
     }
 
-    ExecutionContext context;
-    context.maxMemory = static_cast<size_t>(maxMemoryBytes);
-    context.maxInterruptChecks = static_cast<uint64_t>(maxInterruptChecks);
-
-    LuaStatePtr globalState(lua_newstate(limitedAllocate, &context));
-    if (globalState == nullptr)
+    auto instance = std::make_unique<NativeScriptInstance>(
+        rootModuleName,
+        std::move(moduleBytecodes),
+        static_cast<size_t>(maxMemoryBytes));
+    if (!instance->valid())
     {
-        context.exceededLimit = EXECUTION_MEMORY_LIMIT;
+        instance->context.exceededLimit = EXECUTION_MEMORY_LIMIT;
         return newNativeExecutionResult(
             env,
             EXECUTION_MEMORY_LIMIT,
             nullptr,
-            "Luau VM memory limit exceeded while creating the state",
+            "Failed to create a Luau VM for the compiled program",
             0,
-            context);
+            instance->context);
     }
 
-    luaL_openlibs(globalState.get());
-    luaL_sandbox(globalState.get());
-    lua_Callbacks* callbacks = lua_callbacks(globalState.get());
-    callbacks->userdata = &context;
-
-    lua_State* thread = lua_newthread(globalState.get());
-    if (thread == nullptr)
-    {
-        context.exceededLimit = EXECUTION_MEMORY_LIMIT;
-        return newNativeExecutionResult(
-            env,
-            EXECUTION_MEMORY_LIMIT,
-            nullptr,
-            "Luau VM memory limit exceeded while creating the execution thread",
-            0,
-            context);
-    }
-    luaL_sandboxthread(thread);
-
-    return executeChunk(
+    const auto rootBytecode =
+        instance->moduleBytecodes.find(instance->rootModuleName);
+    instance->loadingModules.insert(instance->rootModuleName);
+    jobject result = executeChunk(
         env,
-        thread,
-        context,
-        chunk,
-        bytecode,
+        instance->thread,
+        instance->context,
+        instance->rootModuleName,
+        rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
         static_cast<uint64_t>(maxInterruptChecks));
+    instance->loadingModules.erase(instance->rootModuleName);
+    return result;
 }
 
 jlong createInstanceImpl(
     JNIEnv* env,
-    jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes,
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray bytecodeArrays,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
 
-    const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
-    const std::string bytecode = getUtf8Bytes(env, bytecodeBytes);
-    if (env->ExceptionCheck())
+    const std::string rootModuleName =
+        getUtf8Bytes(env, rootModuleNameUtf8);
+    std::unordered_map<std::string, std::string> moduleBytecodes;
+    std::vector<std::string> orderedNames;
+    if (env->ExceptionCheck() ||
+        !readNamedByteArrays(
+            env,
+            moduleNamesUtf8,
+            bytecodeArrays,
+            moduleBytecodes,
+            orderedNames))
         return 0;
+    if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
+    {
+        throwNativeException(env, "Root module is not present in native bytecode set");
+        return 0;
+    }
     if (maxMemoryBytes <= 0)
     {
         throwNativeException(env, "Native instance memory limit must be positive");
@@ -1412,8 +1715,8 @@ jlong createInstanceImpl(
     }
 
     auto instance = std::make_unique<NativeScriptInstance>(
-        chunk,
-        bytecode,
+        rootModuleName,
+        std::move(moduleBytecodes),
         static_cast<size_t>(maxMemoryBytes));
     if (!instance->valid())
     {
@@ -1451,14 +1754,18 @@ jobject executeInstanceImpl(
 
     lua_resetthread(instance->thread);
     lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+    const auto rootBytecode =
+        instance->moduleBytecodes.find(instance->rootModuleName);
+    instance->loadingModules.insert(instance->rootModuleName);
     jobject result = executeChunk(
         env,
         instance->thread,
         instance->context,
-        instance->chunk,
-        instance->bytecode,
+        instance->rootModuleName,
+        rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
         static_cast<uint64_t>(maxInterruptChecks));
+    instance->loadingModules.erase(instance->rootModuleName);
     if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
         instance->faulted = true;
     return result;
@@ -1487,16 +1794,20 @@ jobject initializeInstanceImpl(
 
     lua_resetthread(instance->thread);
     lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+    const auto rootBytecode =
+        instance->moduleBytecodes.find(instance->rootModuleName);
+    instance->loadingModules.insert(instance->rootModuleName);
     jobject result = executeChunk(
         env,
         instance->thread,
         instance->context,
-        instance->chunk,
-        instance->bytecode,
+        instance->rootModuleName,
+        rootBytecode->second,
         static_cast<uint64_t>(maxRuntimeNanos),
         static_cast<uint64_t>(maxInterruptChecks),
         true,
         &instance->exportsRef);
+    instance->loadingModules.erase(instance->rootModuleName);
     if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
         instance->faulted = true;
     else
@@ -1669,18 +1980,24 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_compile(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheck(
+Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheckModules(
     JNIEnv* env,
     jclass bindingClass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray sourceUtf8)
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray sourcesUtf8)
 {
     using namespace suterxom::luau;
     return guardNativeCall<jobjectArray>(
         env,
         [&]()
         {
-            return typecheckImpl(env, bindingClass, chunkNameUtf8, sourceUtf8);
+            return typecheckImpl(
+                env,
+                bindingClass,
+                rootModuleNameUtf8,
+                moduleNamesUtf8,
+                sourcesUtf8);
         });
 }
 
@@ -1688,8 +2005,9 @@ JNIEXPORT jobject JNICALL
 Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
     JNIEnv* env,
     jclass bindingClass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes,
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray bytecodeArrays,
     jlong maxRuntimeNanos,
     jlong maxInterruptChecks,
     jlong maxMemoryBytes)
@@ -1702,8 +2020,9 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
             return executeImpl(
                 env,
                 bindingClass,
-                chunkNameUtf8,
-                bytecodeBytes,
+                rootModuleNameUtf8,
+                moduleNamesUtf8,
+                bytecodeArrays,
                 maxRuntimeNanos,
                 maxInterruptChecks,
                 maxMemoryBytes);
@@ -1714,14 +2033,20 @@ JNIEXPORT jlong JNICALL
 Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
     JNIEnv* env,
     jclass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray bytecodeBytes,
+    jbyteArray rootModuleNameUtf8,
+    jobjectArray moduleNamesUtf8,
+    jobjectArray bytecodeArrays,
     jlong maxMemoryBytes)
 {
     using namespace suterxom::luau;
     try
     {
-        return createInstanceImpl(env, chunkNameUtf8, bytecodeBytes, maxMemoryBytes);
+        return createInstanceImpl(
+            env,
+            rootModuleNameUtf8,
+            moduleNamesUtf8,
+            bytecodeArrays,
+            maxMemoryBytes);
     }
     catch (const std::exception& exception)
     {

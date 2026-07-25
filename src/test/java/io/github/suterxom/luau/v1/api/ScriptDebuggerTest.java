@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class ScriptDebuggerTest {
@@ -212,6 +213,123 @@ class ScriptDebuggerTest {
               ExecutionResult.Completed.class,
               instance.debugger().resume());
       assertEquals(List.of(emptyArray), completed.values());
+    }
+  }
+
+  @Test
+  void resumesNestedScriptCoroutineAcrossMultipleBreakpoints() {
+    var compilation =
+        runtime.compile(
+            "debug/coroutine",
+            """
+            return {
+                run = function()
+                    local thread = coroutine.create(function()
+                        local value = 40
+                        value += 1
+                        value += 1
+                        return value
+                    end)
+                    local ok, result = coroutine.resume(thread)
+                    if not ok then
+                        error(result)
+                    end
+                    return result
+                end,
+            }
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      assertEquals(
+          5,
+          instance.debugger().setBreakpoint("debug/coroutine", 5).resolvedLine());
+      assertEquals(
+          6,
+          instance.debugger().setBreakpoint("debug/coroutine", 6).resolvedLine());
+
+      var firstPause =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.invokeExport("run", List.of()));
+      assertEquals(
+          new SourceLocation("debug/coroutine", 5),
+          firstPause.pauseInfo().location());
+      assertTrue(firstPause.pauseInfo().stackFrames().size() >= 2);
+
+      var secondPause =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.debugger().resume());
+      assertEquals(
+          new SourceLocation("debug/coroutine", 6),
+          secondPause.pauseInfo().location());
+      assertTrue(secondPause.pauseInfo().stackFrames().size() >= 2);
+
+      var completed =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.debugger().resume());
+      assertEquals(List.of(new LuauNumber(42)), completed.values());
+    }
+  }
+
+  @Test
+  void pausesAndResumesNestedSourceModuleInitialization() {
+    var compilation =
+        runtime.compile(
+            "app/main",
+            Map.of(
+                "app/main",
+                """
+                local middle = require("lib/middle")
+                return {
+                    read = function(): number
+                        return middle.value
+                    end,
+                }
+                """,
+                "lib/middle",
+                """
+                local leaf = require("lib/leaf")
+                return {value = leaf.value}
+                """,
+                "lib/leaf",
+                """
+                local value = 40
+                value += 2
+                return {value = value}
+                """));
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      Breakpoint breakpoint =
+          instance.debugger().setBreakpoint("lib/leaf", 2);
+      assertEquals(2, breakpoint.resolvedLine());
+
+      var paused =
+          assertInstanceOf(ExecutionResult.Paused.class, instance.initialize());
+      assertEquals(
+          new SourceLocation("lib/leaf", 2),
+          paused.pauseInfo().location());
+      Set<String> stackModules =
+          paused.pauseInfo().stackFrames().stream()
+              .map(frame -> frame.location().moduleName())
+              .collect(Collectors.toSet());
+      assertTrue(stackModules.containsAll(Set.of("lib/leaf", "lib/middle", "app/main")));
+
+      assertInstanceOf(
+          ExecutionResult.Completed.class,
+          instance.debugger().resume());
+      assertEquals(
+          List.of(new LuauNumber(42)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  instance.invokeExport("read", List.of()))
+              .values());
     }
   }
 

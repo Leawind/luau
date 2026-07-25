@@ -19,8 +19,8 @@ Luau Runtime 是一个为 Minecraft 模组提供沙箱化 Luau 编译和执行�
 
 完整设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
-当前调试接口先完成主执行 coroutine 的断点闭环，包括加载后的源码模块函数。依赖模块
-顶层加载、脚本自行创建的 coroutine、主动暂停和单步将在后续阶段补齐。
+当前调试接口已完成根调用、依赖模块顶层加载和脚本自行创建的 coroutine 的断点闭环。
+主动暂停和单步将在后续阶段补齐。
 
 ## 构建
 

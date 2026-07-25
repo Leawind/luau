@@ -162,7 +162,10 @@ using BytecodePtr = std::unique_ptr<char, decltype(&std::free)>;
 
 struct NativeScriptInstance;
 int requireSourceModule(lua_State* state);
+int continueSourceModule(lua_State* state, int status);
+void inheritScriptThread(lua_State* parent, lua_State* child);
 void debuggerBreak(lua_State* state, lua_Debug* debug);
+void debuggerInterrupt(lua_State* state, lua_Debug* debug);
 bool pushHostModule(
     lua_State* state,
     NativeScriptInstance* instance,
@@ -190,6 +193,7 @@ struct NativeScriptInstance
     bool skipBreakpointOnce = false;
     ActiveOperation activeOperation = ActiveOperation::None;
     std::optional<PauseSnapshot> pauseSnapshot;
+    std::vector<lua_State*> pausedThreads;
     int exportsRef = -1;
 
     NativeScriptInstance(
@@ -214,12 +218,19 @@ struct NativeScriptInstance
             return;
 
         luaL_openlibs(globalState.get());
-        lua_pushcfunction(globalState.get(), requireSourceModule, "require");
+        lua_pushcclosurek(
+            globalState.get(),
+            requireSourceModule,
+            "require",
+            0,
+            continueSourceModule);
         lua_setglobal(globalState.get(), "require");
         luaL_sandbox(globalState.get());
         lua_Callbacks* callbacks = lua_callbacks(globalState.get());
         callbacks->userdata = &context;
+        callbacks->userthread = inheritScriptThread;
         callbacks->debugbreak = debuggerBreak;
+        callbacks->debuginterrupt = debuggerInterrupt;
         lua_setthreaddata(globalState.get(), this);
 
         thread = lua_newthread(globalState.get());
@@ -560,12 +571,64 @@ std::string debugFunctionName(const char* name)
     return std::string(name, truncatedLength);
 }
 
+void appendDebugStackFrames(
+    NativeScriptInstance& instance,
+    lua_State* state)
+{
+    if (!instance.pauseSnapshot.has_value())
+        return;
+
+    PauseSnapshot& snapshot = *instance.pauseSnapshot;
+    constexpr size_t MAX_STACK_FRAMES = 256;
+    for (int level = 0;
+         snapshot.stackFrames.size() < MAX_STACK_FRAMES;
+         ++level)
+    {
+        lua_Debug frame{};
+        if (lua_getinfo(state, level, "nsl", &frame) == 0)
+            break;
+        if (frame.currentline <= 0)
+            continue;
+
+        DebugStackFrame captured{
+            debugModuleName(instance, frame.source),
+            debugFunctionName(frame.name),
+            frame.currentline};
+        if (snapshot.line == 0)
+        {
+            snapshot.moduleName = captured.moduleName;
+            snapshot.line = captured.line;
+        }
+        snapshot.stackFrames.push_back(std::move(captured));
+    }
+}
+
+void appendPausedParent(
+    NativeScriptInstance& instance,
+    lua_State* child,
+    lua_State* parent)
+{
+    if (!instance.paused ||
+        instance.pausedThreads.empty() ||
+        instance.pausedThreads.back() != child ||
+        parent == child)
+        return;
+
+    instance.pausedThreads.push_back(parent);
+    appendDebugStackFrames(instance, parent);
+}
+
+void inheritScriptThread(lua_State* parent, lua_State* child)
+{
+    if (parent != nullptr)
+        lua_setthreaddata(child, lua_getthreaddata(parent));
+}
+
 void debuggerBreak(lua_State* state, lua_Debug*)
 {
     auto* instance =
         static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr ||
-        state != instance->thread ||
         instance->activeOperation == ActiveOperation::None)
         return;
     if (instance->skipBreakpointOnce)
@@ -576,32 +639,32 @@ void debuggerBreak(lua_State* state, lua_Debug*)
 
     PauseSnapshot snapshot;
     snapshot.reason = 0;
-    constexpr int MAX_STACK_FRAMES = 256;
-    for (int level = 0; level < MAX_STACK_FRAMES; ++level)
+    instance->pauseSnapshot = std::move(snapshot);
+    appendDebugStackFrames(*instance, state);
+    PauseSnapshot& captured = *instance->pauseSnapshot;
+    if (captured.line == 0)
     {
-        lua_Debug frame{};
-        if (lua_getinfo(state, level, "nsl", &frame) == 0)
-            break;
-        if (frame.currentline <= 0)
-            continue;
-
-        DebugStackFrame captured{
-            debugModuleName(*instance, frame.source),
-            debugFunctionName(frame.name),
-            frame.currentline};
-        if (snapshot.line == 0)
-        {
-            snapshot.moduleName = captured.moduleName;
-            snapshot.line = captured.line;
-        }
-        snapshot.stackFrames.push_back(std::move(captured));
+        instance->pauseSnapshot.reset();
+        return;
     }
-    if (snapshot.line == 0)
+
+    instance->paused = true;
+    instance->pausedThreads.clear();
+    instance->pausedThreads.push_back(state);
+    lua_break(state);
+}
+
+void debuggerInterrupt(lua_State* state, lua_Debug* debug)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr || debug == nullptr || debug->userdata == nullptr)
         return;
 
-    instance->pauseSnapshot = std::move(snapshot);
-    instance->paused = true;
-    lua_break(state);
+    appendPausedParent(
+        *instance,
+        static_cast<lua_State*>(debug->userdata),
+        state);
 }
 
 void applyModuleBreakpoints(
@@ -636,6 +699,73 @@ void rememberModuleClosure(
     }
     else
         instance.moduleClosureRefs.emplace(moduleName, reference);
+}
+
+int finishSourceModule(
+    lua_State* state,
+    NativeScriptInstance& instance,
+    lua_State* moduleThread,
+    const std::string& moduleName,
+    int executionStatus)
+{
+    if (executionStatus == LUA_BREAK)
+    {
+        appendPausedParent(instance, moduleThread, state);
+        return lua_break(state);
+    }
+    if (executionStatus != LUA_OK)
+    {
+        std::string errorMessage;
+        if (executionStatus == LUA_YIELD)
+            errorMessage = "Required module cannot yield: " + moduleName;
+        else
+            errorMessage =
+                "Error while running required module " + moduleName + ": " +
+                luaError(moduleThread);
+        instance.loadingModules.erase(moduleName);
+        lua_pop(state, 1);
+        luaL_error(state, "%s", errorMessage.c_str());
+    }
+    if (lua_gettop(moduleThread) != 1)
+    {
+        const std::string errorMessage =
+            "Required module must return exactly one value: " + moduleName;
+        instance.loadingModules.erase(moduleName);
+        lua_pop(state, 1);
+        luaL_error(state, "%s", errorMessage.c_str());
+    }
+
+    instance.loadingModules.erase(moduleName);
+    lua_xmove(moduleThread, state, 1);
+    lua_remove(state, -2);
+    const int reference = lua_ref(state, -1);
+    instance.moduleCache.emplace(moduleName, reference);
+    return 1;
+}
+
+int continueSourceModule(lua_State* state, int)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr)
+        luaL_error(state, "%s", "Luau require context is unavailable");
+    if (lua_gettop(state) < 2 ||
+        lua_type(state, 1) != LUA_TSTRING ||
+        lua_type(state, -1) != LUA_TTHREAD)
+        luaL_error(state, "%s", "Luau require continuation state is invalid");
+
+    size_t nameLength = 0;
+    const char* nameBytes = lua_tolstring(state, 1, &nameLength);
+    const std::string moduleName(
+        nameBytes == nullptr ? "" : nameBytes,
+        nameLength);
+    lua_State* moduleThread = lua_tothread(state, -1);
+    return finishSourceModule(
+        state,
+        *instance,
+        moduleThread,
+        moduleName,
+        lua_status(moduleThread));
 }
 
 int requireSourceModule(lua_State* state)
@@ -716,34 +846,12 @@ int requireSourceModule(lua_State* state)
     rememberModuleClosure(*instance, moduleThread, moduleName, -1);
 
     const int executionStatus = lua_resume(moduleThread, state, 0);
-    if (executionStatus != LUA_OK)
-    {
-        std::string errorMessage;
-        if (executionStatus == LUA_YIELD)
-            errorMessage = "Required module cannot yield: " + moduleName;
-        else
-            errorMessage =
-                "Error while running required module " + moduleName + ": " +
-                luaError(moduleThread);
-        instance->loadingModules.erase(moduleName);
-        lua_pop(state, 1);
-        luaL_error(state, "%s", errorMessage.c_str());
-    }
-    if (lua_gettop(moduleThread) != 1)
-    {
-        const std::string errorMessage =
-            "Required module must return exactly one value: " + moduleName;
-        instance->loadingModules.erase(moduleName);
-        lua_pop(state, 1);
-        luaL_error(state, "%s", errorMessage.c_str());
-    }
-
-    instance->loadingModules.erase(moduleName);
-    lua_xmove(moduleThread, state, 1);
-    lua_remove(state, -2);
-    const int reference = lua_ref(state, -1);
-    instance->moduleCache.emplace(moduleName, reference);
-    return 1;
+    return finishSourceModule(
+        state,
+        *instance,
+        moduleThread,
+        moduleName,
+        executionStatus);
 }
 
 jobject newNativeValue(
@@ -1995,6 +2103,7 @@ jobject finishExecution(
             context.lastStatus = EXECUTION_RUNTIME_FAILED;
             instance.paused = false;
             instance.activeArrayLengths.clear();
+            instance.pausedThreads.clear();
             return newNativeExecutionResult(
                 env,
                 EXECUTION_RUNTIME_FAILED,
@@ -2015,6 +2124,7 @@ jobject finishExecution(
 
     instance.paused = false;
     instance.pauseSnapshot.reset();
+    instance.pausedThreads.clear();
     if (executionStatus != LUA_OK ||
         context.exceededLimit != EXECUTION_COMPLETED)
     {
@@ -2094,6 +2204,34 @@ jobject finishExecution(
         context);
     env->DeleteLocalRef(values);
     return result;
+}
+
+int resumePausedThreadChain(NativeScriptInstance& instance)
+{
+    const std::vector<lua_State*> suspendedThreads =
+        std::move(instance.pausedThreads);
+    instance.pausedThreads.clear();
+
+    int executionStatus = LUA_BREAK;
+    for (size_t index = 0; index < suspendedThreads.size(); ++index)
+    {
+        lua_State* state = suspendedThreads[index];
+        executionStatus = lua_resume(state, nullptr, 0);
+        if (executionStatus != LUA_BREAK)
+            continue;
+
+        lua_State* child = state;
+        for (size_t parentIndex = index + 1;
+             parentIndex < suspendedThreads.size();
+             ++parentIndex)
+        {
+            lua_State* parent = suspendedThreads[parentIndex];
+            appendPausedParent(instance, child, parent);
+            child = parent;
+        }
+        return executionStatus;
+    }
+    return executionStatus;
 }
 
 jobject executeChunk(
@@ -2876,7 +3014,9 @@ jobject resumeInstanceImpl(
     if (instance == nullptr ||
         instance->faulted ||
         !instance->paused ||
-        instance->activeOperation == ActiveOperation::None)
+        instance->activeOperation == ActiveOperation::None ||
+        instance->pausedThreads.empty() ||
+        instance->pausedThreads.back() != instance->thread)
     {
         throwNativeException(env, "Script instance is not in a resumable debugger pause");
         return nullptr;
@@ -2894,7 +3034,7 @@ jobject resumeInstanceImpl(
     instance->currentHostContext = hostContext;
     startExecutionSegment(instance->thread, instance->context);
     const int executionStatus =
-        lua_resume(instance->thread, nullptr, 0);
+        resumePausedThreadChain(*instance);
     finishExecutionSegment(instance->context);
     instance->currentHostContext = nullptr;
 
@@ -2939,6 +3079,7 @@ jobject terminatePausedInstanceImpl(
     instance->loadingModules.clear();
     instance->activeArrayLengths.clear();
     instance->pauseSnapshot.reset();
+    instance->pausedThreads.clear();
     instance->paused = false;
     instance->skipBreakpointOnce = false;
     instance->activeOperation = ActiveOperation::None;

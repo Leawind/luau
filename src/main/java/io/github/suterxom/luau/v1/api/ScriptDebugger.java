@@ -100,6 +100,24 @@ public final class ScriptDebugger {
     return instance.debuggerPauseInfo();
   }
 
+  /**
+   * Requests a resumable pause at the next yieldable Luau safepoint.
+   *
+   * <p>This method is thread-safe and does not access the Luau stack from the calling thread.
+   */
+  public void requestPause() {
+    instance.requestDebuggerPause();
+  }
+
+  /**
+   * Requests termination at the next Luau safepoint or before a paused invocation resumes.
+   *
+   * <p>This method is thread-safe and does not access the Luau stack from the calling thread.
+   */
+  public void requestTerminate() {
+    instance.requestDebuggerTermination();
+  }
+
   /** Continues the currently paused invocation with its original context and remaining budget. */
   public ExecutionResult resume() {
     return instance.resumePaused();

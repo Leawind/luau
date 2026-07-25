@@ -12,6 +12,7 @@ public record PauseInfo(Reason reason, SourceLocation location, List<StackFrame>
   }
 
   public enum Reason {
-    BREAKPOINT
+    BREAKPOINT,
+    REQUESTED
   }
 }

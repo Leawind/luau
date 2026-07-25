@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -92,6 +93,8 @@ struct ExecutionContext
     uint64_t maxHostCalls = 0;
     uint64_t hostOutputBytes = 0;
     uint64_t maxHostOutputBytes = 0;
+    std::atomic<bool> pauseRequested = false;
+    std::atomic<bool> terminateRequested = false;
     uint64_t elapsedNanos = 0;
     uint64_t maxRuntimeNanos = 0;
     std::chrono::steady_clock::time_point startedAt;
@@ -99,6 +102,8 @@ struct ExecutionContext
     int exceededLimit = EXECUTION_COMPLETED;
     int lastStatus = EXECUTION_COMPLETED;
 };
+
+bool pauseForDebugger(lua_State* state, int reason);
 
 void* limitedAllocate(void* userdata, void* pointer, size_t oldSize, size_t newSize)
 {
@@ -140,6 +145,15 @@ void executionInterrupt(lua_State* state, int gcState)
         context->exceededLimit = EXECUTION_INTERRUPT_LIMIT;
     else if (std::chrono::steady_clock::now() >= context->deadline)
         context->exceededLimit = EXECUTION_RUNTIME_LIMIT;
+    else if (context->terminateRequested.exchange(false))
+        context->exceededLimit = EXECUTION_TERMINATED;
+    else if (context->pauseRequested.exchange(false))
+    {
+        if (lua_isyieldable(state) && pauseForDebugger(state, 1))
+            return;
+        context->pauseRequested.store(true);
+        return;
+    }
     else
         return;
 
@@ -624,34 +638,44 @@ void inheritScriptThread(lua_State* parent, lua_State* child)
         lua_setthreaddata(child, lua_getthreaddata(parent));
 }
 
-void debuggerBreak(lua_State* state, lua_Debug*)
+bool pauseForDebugger(lua_State* state, int reason)
 {
     auto* instance =
         static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr ||
         instance->activeOperation == ActiveOperation::None)
-        return;
-    if (instance->skipBreakpointOnce)
-    {
-        instance->skipBreakpointOnce = false;
-        return;
-    }
+        return false;
 
     PauseSnapshot snapshot;
-    snapshot.reason = 0;
+    snapshot.reason = reason;
     instance->pauseSnapshot = std::move(snapshot);
     appendDebugStackFrames(*instance, state);
     PauseSnapshot& captured = *instance->pauseSnapshot;
     if (captured.line == 0)
     {
         instance->pauseSnapshot.reset();
-        return;
+        return false;
     }
 
     instance->paused = true;
     instance->pausedThreads.clear();
     instance->pausedThreads.push_back(state);
     lua_break(state);
+    return true;
+}
+
+void debuggerBreak(lua_State* state, lua_Debug*)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr)
+        return;
+    if (instance->skipBreakpointOnce)
+    {
+        instance->skipBreakpointOnce = false;
+        return;
+    }
+    pauseForDebugger(state, 0);
 }
 
 void debuggerInterrupt(lua_State* state, lua_Debug* debug)
@@ -2081,6 +2105,8 @@ std::string executionFailureMessage(
         return "Luau execution exceeded its host-call budget";
     if (status == EXECUTION_HOST_OUTPUT_LIMIT)
         return "Luau execution exceeded its host-output budget";
+    if (status == EXECUTION_TERMINATED)
+        return "Luau execution was terminated by a debugger request";
     if (executionStatus == LUA_YIELD)
         return "Luau execution cannot yield across the host boundary";
     return luaError(thread);
@@ -2232,6 +2258,33 @@ int resumePausedThreadChain(NativeScriptInstance& instance)
         return executionStatus;
     }
     return executionStatus;
+}
+
+jobject terminatePausedExecution(
+    JNIEnv* env,
+    NativeScriptInstance& instance,
+    std::string_view message)
+{
+    lua_resetthread(instance.thread);
+    instance.loadingModules.clear();
+    instance.activeArrayLengths.clear();
+    instance.pauseSnapshot.reset();
+    instance.pausedThreads.clear();
+    instance.paused = false;
+    instance.skipBreakpointOnce = false;
+    instance.activeOperation = ActiveOperation::None;
+    instance.currentHostContext = nullptr;
+    instance.faulted = true;
+    instance.context.pauseRequested.store(false);
+    instance.context.terminateRequested.store(false);
+    instance.context.lastStatus = EXECUTION_TERMINATED;
+    return newNativeExecutionResult(
+        env,
+        EXECUTION_TERMINATED,
+        nullptr,
+        message,
+        instance.context.elapsedNanos,
+        instance.context);
 }
 
 jobject executeChunk(
@@ -3002,6 +3055,34 @@ jint setBreakpointImpl(
     return static_cast<jint>(resolvedLine);
 }
 
+void requestPauseInstanceImpl(JNIEnv* env, jlong handle)
+{
+    using namespace suterxom::luau;
+
+    auto* instance =
+        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+    if (instance == nullptr)
+    {
+        throwNativeException(env, "Script instance handle is null");
+        return;
+    }
+    instance->context.pauseRequested.store(true);
+}
+
+void requestTerminateInstanceImpl(JNIEnv* env, jlong handle)
+{
+    using namespace suterxom::luau;
+
+    auto* instance =
+        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+    if (instance == nullptr)
+    {
+        throwNativeException(env, "Script instance handle is null");
+        return;
+    }
+    instance->context.terminateRequested.store(true);
+}
+
 jobject resumeInstanceImpl(
     JNIEnv* env,
     jlong handle,
@@ -3026,11 +3107,20 @@ jobject resumeInstanceImpl(
         throwNativeException(env, "Native host call context must not be null");
         return nullptr;
     }
+    if (instance->context.terminateRequested.exchange(false))
+        return terminatePausedExecution(
+            env,
+            *instance,
+            "Luau execution was terminated by a pending debugger request");
+    instance->context.pauseRequested.store(false);
 
     const ActiveOperation operation = instance->activeOperation;
+    const bool resumeFromBreakpoint =
+        instance->pauseSnapshot.has_value() &&
+        instance->pauseSnapshot->reason == 0;
     instance->paused = false;
     instance->pauseSnapshot.reset();
-    instance->skipBreakpointOnce = true;
+    instance->skipBreakpointOnce = resumeFromBreakpoint;
     instance->currentHostContext = hostContext;
     startExecutionSegment(instance->thread, instance->context);
     const int executionStatus =
@@ -3075,24 +3165,10 @@ jobject terminatePausedInstanceImpl(
         return nullptr;
     }
 
-    lua_resetthread(instance->thread);
-    instance->loadingModules.clear();
-    instance->activeArrayLengths.clear();
-    instance->pauseSnapshot.reset();
-    instance->pausedThreads.clear();
-    instance->paused = false;
-    instance->skipBreakpointOnce = false;
-    instance->activeOperation = ActiveOperation::None;
-    instance->currentHostContext = nullptr;
-    instance->faulted = true;
-    instance->context.lastStatus = EXECUTION_TERMINATED;
-    return newNativeExecutionResult(
+    return terminatePausedExecution(
         env,
-        EXECUTION_TERMINATED,
-        nullptr,
-        "Luau execution was terminated while paused",
-        instance->context.elapsedNanos,
-        instance->context);
+        *instance,
+        "Luau execution was terminated while paused");
 }
 
 JNIEXPORT jbyteArray JNICALL
@@ -3318,6 +3394,24 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_setBreakpoint(
             throwNativeException(env, "Unknown native Luau failure");
     }
     return -1;
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestPauseInstance(
+    JNIEnv* env,
+    jclass,
+    jlong handle)
+{
+    requestPauseInstanceImpl(env, handle);
+}
+
+JNIEXPORT void JNICALL
+Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestTerminateInstance(
+    JNIEnv* env,
+    jclass,
+    jlong handle)
+{
+    requestTerminateInstanceImpl(env, handle);
 }
 
 JNIEXPORT jobject JNICALL

@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * An isolated persistent Luau VM.
@@ -29,6 +30,7 @@ public final class ScriptInstance implements AutoCloseable {
   private final List<HostModule> hostModules;
   private final long maxMemoryBytes;
   private final ScriptDebugger debugger;
+  private final ReentrantReadWriteLock nativeHandleLock = new ReentrantReadWriteLock();
   private long nativeHandle;
   private boolean faulted;
   private boolean initialized;
@@ -236,32 +238,44 @@ public final class ScriptInstance implements AutoCloseable {
       throw new IllegalStateException(
           "Terminate a paused invocation before resetting its script instance");
     }
-    long replacement =
-        NativeBindings.createInstance(
-            rootModuleNameUtf8,
-            moduleNamesUtf8,
-            bytecodes,
-            NativeHostRegistry.create(hostModules),
-            maxMemoryBytes);
-    NativeBindings.closeInstance(nativeHandle);
-    nativeHandle = replacement;
-    faulted = false;
-    initialized = false;
-    clearPause();
-    debugger.reapplyAfterReset();
+    var writeLock = nativeHandleLock.writeLock();
+    writeLock.lock();
+    try {
+      long replacement =
+          NativeBindings.createInstance(
+              rootModuleNameUtf8,
+              moduleNamesUtf8,
+              bytecodes,
+              NativeHostRegistry.create(hostModules),
+              maxMemoryBytes);
+      NativeBindings.closeInstance(nativeHandle);
+      nativeHandle = replacement;
+      faulted = false;
+      initialized = false;
+      clearPause();
+      debugger.reapplyAfterReset();
+    } finally {
+      writeLock.unlock();
+    }
   }
 
   @Override
   public synchronized void close() {
     checkOwnerThread();
     checkNotRunning();
-    if (nativeHandle != 0) {
-      NativeBindings.closeInstance(nativeHandle);
-      nativeHandle = 0;
-      clearPause();
-      for (byte[] bytecode : bytecodes) {
-        Arrays.fill(bytecode, (byte) 0);
+    var writeLock = nativeHandleLock.writeLock();
+    writeLock.lock();
+    try {
+      if (nativeHandle != 0) {
+        NativeBindings.closeInstance(nativeHandle);
+        nativeHandle = 0;
+        clearPause();
+        for (byte[] bytecode : bytecodes) {
+          Arrays.fill(bytecode, (byte) 0);
+        }
       }
+    } finally {
+      writeLock.unlock();
     }
   }
 
@@ -329,6 +343,32 @@ public final class ScriptInstance implements AutoCloseable {
   synchronized Optional<PauseInfo> debuggerPauseInfo() {
     checkDebuggerReadAccess();
     return Optional.ofNullable(pauseInfo);
+  }
+
+  void requestDebuggerPause() {
+    var readLock = nativeHandleLock.readLock();
+    readLock.lock();
+    try {
+      if (nativeHandle == 0) {
+        throw new IllegalStateException("Script instance is closed");
+      }
+      NativeBindings.requestPauseInstance(nativeHandle);
+    } finally {
+      readLock.unlock();
+    }
+  }
+
+  void requestDebuggerTermination() {
+    var readLock = nativeHandleLock.readLock();
+    readLock.lock();
+    try {
+      if (nativeHandle == 0) {
+        throw new IllegalStateException("Script instance is closed");
+      }
+      NativeBindings.requestTerminateInstance(nativeHandle);
+    } finally {
+      readLock.unlock();
+    }
   }
 
   synchronized ExecutionResult resumePaused() {

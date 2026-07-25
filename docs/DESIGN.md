@@ -410,7 +410,8 @@ safepoint 无法介入，因此公开 API 要求宿主函数不得阻塞，并�
 
 当前已完成所有 Luau coroutine 上的断点设置、删除、清空、暂停、恢复、终止和跨
 coroutine 调用栈快照，且保留原宿主上下文与累计预算。依赖模块顶层加载中的断点也会
-通过可继续的 `require` 边界传播。主动暂停和三种单步仍按本节后续设计实现。
+通过可继续的 `require` 边界传播。`requestPause` 和 `requestTerminate` 使用原子
+请求与受保护的 native handle，可由非所有者线程调用；三种单步仍按本节后续设计实现。
 
 ### 断点
 

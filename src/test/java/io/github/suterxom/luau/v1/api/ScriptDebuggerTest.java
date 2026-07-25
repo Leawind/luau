@@ -3,6 +3,7 @@ package io.github.suterxom.luau.v1.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,14 +11,19 @@ import io.github.suterxom.luau.v1.api.debug.Breakpoint;
 import io.github.suterxom.luau.v1.api.debug.PauseInfo;
 import io.github.suterxom.luau.v1.api.debug.SourceLocation;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
+import io.github.suterxom.luau.v1.api.host.HostCallException;
 import io.github.suterxom.luau.v1.api.host.HostFunction;
 import io.github.suterxom.luau.v1.api.host.HostModule;
+import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.value.LuauArray;
 import io.github.suterxom.luau.v1.api.value.LuauNumber;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -30,6 +36,27 @@ class ScriptDebuggerTest {
       return (nil :: any) :: {
           beforePause: () -> number,
           fromContext: () -> number,
+      }
+      """;
+  private static final String CONTROL_NAME = "debug/control@1";
+  private static final String CONTROL_DECLARATION =
+      """
+      return (nil :: any) :: {
+          synchronize: () -> number,
+      }
+      """;
+  private static final String CONTROL_PROGRAM =
+      """
+      local control = require("debug/control@1")
+      return {
+          run = function(): number
+              control.synchronize()
+              local total = 0
+              for value = 1, 100 do
+                  total += value
+              end
+              return total
+          end,
       }
       """;
 
@@ -401,7 +428,106 @@ class ScriptDebuggerTest {
   }
 
   @Test
-  void terminatesPausedInvocationAndReappliesBreakpointAfterReset() {
+  void acceptsCrossThreadPauseRequestAtSafepoint() throws InterruptedException {
+    var compilation =
+        runtime.compile(
+            "debug/request-pause",
+            Map.of("debug/request-pause", CONTROL_PROGRAM),
+            List.of(controlHostModule()));
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      assertEquals(
+          9,
+          instance
+              .debugger()
+              .setBreakpoint("debug/request-pause", 9)
+              .resolvedLine());
+      RequestControl control = new RequestControl();
+      HostCallContext context =
+          HostCallContext.builder().put(RequestControl.class, control).build();
+      AtomicReference<Throwable> requestFailure = new AtomicReference<>();
+      Thread requester =
+          requestFromOtherThread(
+              control,
+              instance.debugger()::requestPause,
+              requestFailure);
+
+      var paused =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.invokeExport(
+                  "run",
+                  List.of(),
+                  context,
+                  new ExecutionBudget(Duration.ofSeconds(2), 1_000_000)));
+      requester.join();
+      assertNull(requestFailure.get());
+      assertEquals(PauseInfo.Reason.REQUESTED, paused.pauseInfo().reason());
+      assertFalse(paused.pauseInfo().stackFrames().isEmpty());
+
+      var breakpointPause =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.debugger().resume());
+      assertEquals(PauseInfo.Reason.BREAKPOINT, breakpointPause.pauseInfo().reason());
+      assertEquals(
+          new SourceLocation("debug/request-pause", 9),
+          breakpointPause.pauseInfo().location());
+
+      var completed =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.debugger().resume());
+      assertEquals(List.of(new LuauNumber(5050)), completed.values());
+      assertEquals(1, completed.metrics().hostCalls());
+    }
+  }
+
+  @Test
+  void acceptsCrossThreadTerminationRequestAtSafepoint() throws InterruptedException {
+    var compilation =
+        runtime.compile(
+            "debug/request-terminate",
+            Map.of("debug/request-terminate", CONTROL_PROGRAM),
+            List.of(controlHostModule()));
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      RequestControl control = new RequestControl();
+      HostCallContext context =
+          HostCallContext.builder().put(RequestControl.class, control).build();
+      AtomicReference<Throwable> requestFailure = new AtomicReference<>();
+      Thread requester =
+          requestFromOtherThread(
+              control,
+              instance.debugger()::requestTerminate,
+              requestFailure);
+
+      var terminated =
+          assertInstanceOf(
+              ExecutionResult.Terminated.class,
+              instance.invokeExport(
+                  "run",
+                  List.of(),
+                  context,
+                  new ExecutionBudget(Duration.ofSeconds(2), 1_000_000)));
+      requester.join();
+      assertNull(requestFailure.get());
+      assertTrue(terminated.message().contains("debugger request"));
+      assertEquals(1, terminated.metrics().hostCalls());
+      assertTrue(instance.isFaulted());
+      assertFalse(instance.debugger().isPaused());
+    }
+  }
+
+  @Test
+  void terminatesPausedInvocationAndReappliesBreakpointAfterReset()
+      throws InterruptedException {
     var compilation =
         runtime.compile(
             "debug/terminate",
@@ -446,8 +572,89 @@ class ScriptDebuggerTest {
       assertInstanceOf(
           ExecutionResult.Paused.class,
           instance.invokeExport("run", List.of()));
+
+      AtomicReference<Throwable> requestFailure = new AtomicReference<>();
+      Thread requester =
+          new Thread(
+              () -> {
+                try {
+                  instance.debugger().requestTerminate();
+                } catch (Throwable throwable) {
+                  requestFailure.set(throwable);
+                }
+              });
+      requester.start();
+      requester.join();
+      assertNull(requestFailure.get());
+      var requestedTermination =
+          assertInstanceOf(
+              ExecutionResult.Terminated.class,
+              instance.debugger().resume());
+      assertTrue(requestedTermination.message().contains("pending debugger request"));
     }
   }
 
   private record DebugCapability(int value) {}
+
+  private static HostModule controlHostModule() {
+    return new HostModule(
+        CONTROL_NAME,
+        "1",
+        CONTROL_DECLARATION,
+        () ->
+            Map.of(
+                "synchronize",
+                (HostFunction)
+                    (context, arguments) -> {
+                      context.require(RequestControl.class).synchronize();
+                      return List.of(new LuauNumber(0));
+                    }));
+  }
+
+  private static Thread requestFromOtherThread(
+      RequestControl control,
+      Runnable request,
+      AtomicReference<Throwable> failure) {
+    Thread thread =
+        new Thread(
+            () -> {
+              try {
+                control.awaitExecution();
+                request.run();
+              } catch (Throwable throwable) {
+                failure.set(throwable);
+              } finally {
+                control.releaseExecution();
+              }
+            });
+    thread.start();
+    return thread;
+  }
+
+  private static final class RequestControl {
+    private final CountDownLatch executionEntered = new CountDownLatch(1);
+    private final CountDownLatch requestSent = new CountDownLatch(1);
+
+    void synchronize() throws HostCallException {
+      executionEntered.countDown();
+      try {
+        if (!requestSent.await(5, TimeUnit.SECONDS)) {
+          throw new HostCallException("Timed out waiting for debugger request");
+        }
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new HostCallException("Interrupted while waiting for debugger request", exception);
+      }
+    }
+
+    void awaitExecution() throws InterruptedException {
+      if (!executionEntered.await(5, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for Luau execution");
+      }
+    }
+
+    void releaseExecution() {
+      requestSent.countDown();
+    }
+  }
 }

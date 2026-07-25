@@ -526,6 +526,225 @@ class ScriptDebuggerTest {
   }
 
   @Test
+  void stepsIntoOverAndOutOfLuauFunctions() {
+    var compilation =
+        runtime.compile(
+            "debug/step",
+            """
+            return {
+                run = function(): number
+                    local value = 1
+                    local function add()
+                        value += 1
+                        value += 1
+                    end
+                    add()
+                    value += 10
+                    return value
+                end,
+            }
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance intoInstance = chunk.createInstance();
+        ScriptInstance overInstance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, intoInstance.initialize());
+      assertEquals(
+          8,
+          intoInstance.debugger().setBreakpoint("debug/step", 8).resolvedLine());
+      var callPause =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.invokeExport("run", List.of()));
+      assertEquals(new SourceLocation("debug/step", 8), callPause.pauseInfo().location());
+
+      var insideFunction =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.debugger().stepInto());
+      assertEquals(PauseInfo.Reason.STEP, insideFunction.pauseInfo().reason());
+      assertEquals(
+          new SourceLocation("debug/step", 5),
+          insideFunction.pauseInfo().location());
+      assertTrue(
+          insideFunction.pauseInfo().stackFrames().size()
+              > callPause.pauseInfo().stackFrames().size());
+
+      var nextLine =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.debugger().stepOver());
+      assertEquals(PauseInfo.Reason.STEP, nextLine.pauseInfo().reason());
+      assertEquals(new SourceLocation("debug/step", 6), nextLine.pauseInfo().location());
+
+      var caller =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.debugger().stepOut());
+      assertEquals(PauseInfo.Reason.STEP, caller.pauseInfo().reason());
+      assertEquals(new SourceLocation("debug/step", 9), caller.pauseInfo().location());
+      assertEquals(
+          List.of(new LuauNumber(13)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  intoInstance.debugger().resume())
+              .values());
+
+      assertInstanceOf(ExecutionResult.Completed.class, overInstance.initialize());
+      overInstance.debugger().setBreakpoint("debug/step", 8);
+      assertInstanceOf(
+          ExecutionResult.Paused.class,
+          overInstance.invokeExport("run", List.of()));
+      var skippedFunction =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              overInstance.debugger().stepOver());
+      assertEquals(
+          new SourceLocation("debug/step", 9),
+          skippedFunction.pauseInfo().location());
+      assertEquals(
+          List.of(new LuauNumber(13)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  overInstance.debugger().resume())
+              .values());
+    }
+  }
+
+  @Test
+  void stepsAcrossScriptCoroutineBoundary() {
+    var compilation =
+        runtime.compile(
+            "debug/step-coroutine",
+            """
+            return {
+                run = function()
+                    local thread = coroutine.create(function()
+                        local value = 41
+                        value += 1
+                        return value
+                    end)
+                    local ok, result = coroutine.resume(thread)
+                    if not ok then
+                        error(result)
+                    end
+                    return result
+                end,
+            }
+            """);
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance intoInstance = chunk.createInstance();
+        ScriptInstance overInstance = chunk.createInstance()) {
+      assertInstanceOf(ExecutionResult.Completed.class, intoInstance.initialize());
+      assertEquals(
+          8,
+          intoInstance
+              .debugger()
+              .setBreakpoint("debug/step-coroutine", 8)
+              .resolvedLine());
+      var resumeCall =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.invokeExport("run", List.of()));
+
+      var child =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.debugger().stepInto());
+      assertEquals(
+          new SourceLocation("debug/step-coroutine", 4),
+          child.pauseInfo().location());
+      assertTrue(
+          child.pauseInfo().stackFrames().size()
+              > resumeCall.pauseInfo().stackFrames().size());
+
+      var parent =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              intoInstance.debugger().stepOut());
+      assertEquals(
+          new SourceLocation("debug/step-coroutine", 9),
+          parent.pauseInfo().location());
+      assertEquals(
+          List.of(new LuauNumber(42)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  intoInstance.debugger().resume())
+              .values());
+
+      assertInstanceOf(ExecutionResult.Completed.class, overInstance.initialize());
+      overInstance.debugger().setBreakpoint("debug/step-coroutine", 8);
+      assertInstanceOf(
+          ExecutionResult.Paused.class,
+          overInstance.invokeExport("run", List.of()));
+      var skippedChild =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              overInstance.debugger().stepOver());
+      assertEquals(
+          new SourceLocation("debug/step-coroutine", 9),
+          skippedChild.pauseInfo().location());
+    }
+  }
+
+  @Test
+  void stepsIntoAndOutOfSourceModuleInitialization() {
+    var compilation =
+        runtime.compile(
+            "debug/step-module",
+            Map.of(
+                "debug/step-module",
+                """
+                local value = require("lib/step-value")
+                return {read = function(): number return value end}
+                """,
+                "lib/step-value",
+                """
+                local value = 41
+                value += 1
+                return value
+                """));
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance()) {
+      assertEquals(
+          1,
+          instance
+              .debugger()
+              .setBreakpoint("debug/step-module", 1)
+              .resolvedLine());
+      assertInstanceOf(ExecutionResult.Paused.class, instance.initialize());
+
+      var module =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.debugger().stepInto());
+      assertEquals(
+          new SourceLocation("lib/step-value", 1),
+          module.pauseInfo().location());
+
+      var root =
+          assertInstanceOf(
+              ExecutionResult.Paused.class,
+              instance.debugger().stepOut());
+      assertEquals(
+          new SourceLocation("debug/step-module", 2),
+          root.pauseInfo().location());
+      assertInstanceOf(ExecutionResult.Completed.class, instance.debugger().resume());
+      assertEquals(
+          List.of(new LuauNumber(42)),
+          assertInstanceOf(
+                  ExecutionResult.Completed.class,
+                  instance.invokeExport("read", List.of()))
+              .values());
+    }
+  }
+
+  @Test
   void terminatesPausedInvocationAndReappliesBreakpointAfterReset()
       throws InterruptedException {
     var compilation =

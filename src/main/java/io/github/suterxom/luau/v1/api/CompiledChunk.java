@@ -204,6 +204,7 @@ public final class CompiledChunk implements AutoCloseable {
         switch (nativePause.reason()) {
           case 0 -> PauseInfo.Reason.BREAKPOINT;
           case 1 -> PauseInfo.Reason.REQUESTED;
+          case 2 -> PauseInfo.Reason.STEP;
           default -> throw new LinkageError(
               "Unknown native pause reason: " + nativePause.reason());
         };

@@ -4,7 +4,7 @@ import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 9;
+  public static final int EXPECTED_ABI_VERSION = 10;
 
   static {
     NativeLibraryLoader.load();
@@ -86,7 +86,7 @@ public final class NativeBindings {
   public static native void requestTerminateInstance(long handle);
 
   public static native NativeExecutionResult resumeInstance(
-      long handle, HostCallContext hostContext);
+      long handle, HostCallContext hostContext, int stepMode);
 
   public static native NativeExecutionResult terminatePausedInstance(long handle);
 

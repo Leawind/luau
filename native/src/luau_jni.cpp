@@ -67,6 +67,14 @@ enum class ActiveOperation
     InvokeExport,
 };
 
+enum class StepMode
+{
+    None,
+    Into,
+    Over,
+    Out,
+};
+
 struct DebugStackFrame
 {
     std::string moduleName;
@@ -79,6 +87,7 @@ struct PauseSnapshot
     int reason = 0;
     std::string moduleName;
     int line = 0;
+    size_t stackDepth = 0;
     std::vector<DebugStackFrame> stackFrames;
 };
 
@@ -179,6 +188,7 @@ int requireSourceModule(lua_State* state);
 int continueSourceModule(lua_State* state, int status);
 void inheritScriptThread(lua_State* parent, lua_State* child);
 void debuggerBreak(lua_State* state, lua_Debug* debug);
+void debuggerStep(lua_State* state, lua_Debug* debug);
 void debuggerInterrupt(lua_State* state, lua_Debug* debug);
 bool pushHostModule(
     lua_State* state,
@@ -206,6 +216,12 @@ struct NativeScriptInstance
     bool paused = false;
     bool skipBreakpointOnce = false;
     ActiveOperation activeOperation = ActiveOperation::None;
+    StepMode stepMode = StepMode::None;
+    std::string stepStartModule;
+    int stepStartLine = 0;
+    size_t stepStartDepth = 0;
+    lua_State* stepActiveThread = nullptr;
+    size_t stepDormantDepth = 0;
     std::optional<PauseSnapshot> pauseSnapshot;
     std::vector<lua_State*> pausedThreads;
     int exportsRef = -1;
@@ -244,6 +260,7 @@ struct NativeScriptInstance
         callbacks->userdata = &context;
         callbacks->userthread = inheritScriptThread;
         callbacks->debugbreak = debuggerBreak;
+        callbacks->debugstep = debuggerStep;
         callbacks->debuginterrupt = debuggerInterrupt;
         lua_setthreaddata(globalState.get(), this);
 
@@ -594,14 +611,15 @@ void appendDebugStackFrames(
 
     PauseSnapshot& snapshot = *instance.pauseSnapshot;
     constexpr size_t MAX_STACK_FRAMES = 256;
-    for (int level = 0;
-         snapshot.stackFrames.size() < MAX_STACK_FRAMES;
-         ++level)
+    for (int level = 0;; ++level)
     {
         lua_Debug frame{};
         if (lua_getinfo(state, level, "nsl", &frame) == 0)
             break;
         if (frame.currentline <= 0)
+            continue;
+        ++snapshot.stackDepth;
+        if (snapshot.stackFrames.size() >= MAX_STACK_FRAMES)
             continue;
 
         DebugStackFrame captured{
@@ -615,6 +633,30 @@ void appendDebugStackFrames(
         }
         snapshot.stackFrames.push_back(std::move(captured));
     }
+}
+
+size_t debugStackDepth(lua_State* state)
+{
+    size_t depth = 0;
+    for (int level = 0;; ++level)
+    {
+        lua_Debug frame{};
+        if (lua_getinfo(state, level, "l", &frame) == 0)
+            break;
+        if (frame.currentline > 0)
+            ++depth;
+    }
+    return depth;
+}
+
+void clearSingleStep(NativeScriptInstance& instance)
+{
+    instance.stepMode = StepMode::None;
+    instance.stepStartModule.clear();
+    instance.stepStartLine = 0;
+    instance.stepStartDepth = 0;
+    instance.stepActiveThread = nullptr;
+    instance.stepDormantDepth = 0;
 }
 
 void appendPausedParent(
@@ -660,6 +702,8 @@ bool pauseForDebugger(lua_State* state, int reason)
     instance->paused = true;
     instance->pausedThreads.clear();
     instance->pausedThreads.push_back(state);
+    lua_singlestep(state, false);
+    clearSingleStep(*instance);
     lua_break(state);
     return true;
 }
@@ -676,6 +720,42 @@ void debuggerBreak(lua_State* state, lua_Debug*)
         return;
     }
     pauseForDebugger(state, 0);
+}
+
+void debuggerStep(lua_State* state, lua_Debug*)
+{
+    auto* instance =
+        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr || instance->stepMode == StepMode::None)
+        return;
+
+    lua_Debug frame{};
+    if (lua_getinfo(state, 0, "sl", &frame) == 0 ||
+        frame.currentline <= 0)
+        return;
+    const std::string moduleName =
+        debugModuleName(*instance, frame.source);
+    const bool changedLocation =
+        moduleName != instance->stepStartModule ||
+        frame.currentline != instance->stepStartLine;
+
+    bool shouldPause = false;
+    if (instance->stepMode == StepMode::Into)
+        shouldPause = changedLocation;
+    else if (state == instance->stepActiveThread)
+    {
+        const size_t depth =
+            debugStackDepth(state) + instance->stepDormantDepth;
+        if (instance->stepMode == StepMode::Over)
+            shouldPause =
+                depth < instance->stepStartDepth ||
+                (depth == instance->stepStartDepth && changedLocation);
+        else if (instance->stepMode == StepMode::Out)
+            shouldPause = depth < instance->stepStartDepth;
+    }
+
+    if (shouldPause)
+        pauseForDebugger(state, 2);
 }
 
 void debuggerInterrupt(lua_State* state, lua_Debug* debug)
@@ -869,6 +949,7 @@ int requireSourceModule(lua_State* state)
     }
     rememberModuleClosure(*instance, moduleThread, moduleName, -1);
 
+    lua_singlestep(moduleThread, instance->stepMode != StepMode::None);
     const int executionStatus = lua_resume(moduleThread, state, 0);
     return finishSourceModule(
         state,
@@ -2130,6 +2211,8 @@ jobject finishExecution(
             instance.paused = false;
             instance.activeArrayLengths.clear();
             instance.pausedThreads.clear();
+            lua_singlestep(thread, false);
+            clearSingleStep(instance);
             return newNativeExecutionResult(
                 env,
                 EXECUTION_RUNTIME_FAILED,
@@ -2151,6 +2234,8 @@ jobject finishExecution(
     instance.paused = false;
     instance.pauseSnapshot.reset();
     instance.pausedThreads.clear();
+    lua_singlestep(thread, false);
+    clearSingleStep(instance);
     if (executionStatus != LUA_OK ||
         context.exceededLimit != EXECUTION_COMPLETED)
     {
@@ -2242,6 +2327,14 @@ int resumePausedThreadChain(NativeScriptInstance& instance)
     for (size_t index = 0; index < suspendedThreads.size(); ++index)
     {
         lua_State* state = suspendedThreads[index];
+        size_t dormantDepth = 0;
+        for (size_t parentIndex = index + 1;
+             parentIndex < suspendedThreads.size();
+             ++parentIndex)
+            dormantDepth += debugStackDepth(suspendedThreads[parentIndex]);
+        instance.stepActiveThread = state;
+        instance.stepDormantDepth = dormantDepth;
+        lua_singlestep(state, instance.stepMode != StepMode::None);
         executionStatus = lua_resume(state, nullptr, 0);
         if (executionStatus != LUA_BREAK)
             continue;
@@ -2274,6 +2367,7 @@ jobject terminatePausedExecution(
     instance.skipBreakpointOnce = false;
     instance.activeOperation = ActiveOperation::None;
     instance.currentHostContext = nullptr;
+    clearSingleStep(instance);
     instance.faulted = true;
     instance.context.pauseRequested.store(false);
     instance.context.terminateRequested.store(false);
@@ -3086,7 +3180,8 @@ void requestTerminateInstanceImpl(JNIEnv* env, jlong handle)
 jobject resumeInstanceImpl(
     JNIEnv* env,
     jlong handle,
-    jobject hostContext)
+    jobject hostContext,
+    jint requestedStepMode)
 {
     using namespace suterxom::luau;
 
@@ -3107,6 +3202,11 @@ jobject resumeInstanceImpl(
         throwNativeException(env, "Native host call context must not be null");
         return nullptr;
     }
+    if (requestedStepMode < 0 || requestedStepMode > 3)
+    {
+        throwNativeException(env, "Native debugger step mode is invalid");
+        return nullptr;
+    }
     if (instance->context.terminateRequested.exchange(false))
         return terminatePausedExecution(
             env,
@@ -3118,6 +3218,16 @@ jobject resumeInstanceImpl(
     const bool resumeFromBreakpoint =
         instance->pauseSnapshot.has_value() &&
         instance->pauseSnapshot->reason == 0;
+    if (requestedStepMode == 0)
+        clearSingleStep(*instance);
+    else
+    {
+        instance->stepMode = static_cast<StepMode>(requestedStepMode);
+        instance->stepStartModule = instance->pauseSnapshot->moduleName;
+        instance->stepStartLine = instance->pauseSnapshot->line;
+        instance->stepStartDepth =
+            instance->pauseSnapshot->stackDepth;
+    }
     instance->paused = false;
     instance->pauseSnapshot.reset();
     instance->skipBreakpointOnce = resumeFromBreakpoint;
@@ -3419,7 +3529,8 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_resumeInstance(
     JNIEnv* env,
     jclass,
     jlong handle,
-    jobject hostContext)
+    jobject hostContext,
+    jint stepMode)
 {
     using namespace suterxom::luau;
     return guardNativeCall<jobject>(
@@ -3429,7 +3540,8 @@ Java_io_github_suterxom_luau_internal_jni_NativeBindings_resumeInstance(
             return resumeInstanceImpl(
                 env,
                 handle,
-                hostContext);
+                hostContext,
+                stepMode);
         });
 }
 

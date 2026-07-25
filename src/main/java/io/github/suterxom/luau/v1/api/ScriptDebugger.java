@@ -123,6 +123,21 @@ public final class ScriptDebugger {
     return instance.resumePaused();
   }
 
+  /** Continues until execution reaches a different visible source location. */
+  public ExecutionResult stepInto() {
+    return instance.stepPaused(1);
+  }
+
+  /** Continues until the current frame reaches a new location or returns. */
+  public ExecutionResult stepOver() {
+    return instance.stepPaused(2);
+  }
+
+  /** Continues until execution returns to a shallower Luau call stack. */
+  public ExecutionResult stepOut() {
+    return instance.stepPaused(3);
+  }
+
   /** Discards the currently paused invocation and faults the instance. */
   public ExecutionResult terminate() {
     return instance.terminatePaused();

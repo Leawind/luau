@@ -372,6 +372,17 @@ public final class ScriptInstance implements AutoCloseable {
   }
 
   synchronized ExecutionResult resumePaused() {
+    return continuePaused(0);
+  }
+
+  synchronized ExecutionResult stepPaused(int stepMode) {
+    if (stepMode < 1 || stepMode > 3) {
+      throw new IllegalArgumentException("Debugger step mode must be between 1 and 3");
+    }
+    return continuePaused(stepMode);
+  }
+
+  private ExecutionResult continuePaused(int stepMode) {
     checkDebuggerAccess(true);
     if (pausedOperation == null || pausedHostContext == null || pauseInfo == null) {
       throw new IllegalStateException("Script instance is not paused");
@@ -383,7 +394,7 @@ public final class ScriptInstance implements AutoCloseable {
     try {
       ExecutionResult result =
           CompiledChunk.decodeExecutionResult(
-              NativeBindings.resumeInstance(nativeHandle, hostContext));
+              NativeBindings.resumeInstance(nativeHandle, hostContext, stepMode));
       acceptInvocationResult(result, operation, hostContext);
       return result;
     } catch (RuntimeException | Error throwable) {

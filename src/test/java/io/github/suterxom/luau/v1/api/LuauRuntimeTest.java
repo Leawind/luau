@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suterxom.luau.internal.loader.NativePlatform;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
@@ -28,7 +29,7 @@ class LuauRuntimeTest {
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
     assertEquals(4, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
-    assertTrue(info.nativePlatform().startsWith("linux-"));
+    assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
 
   @Test

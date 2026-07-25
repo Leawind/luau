@@ -4,7 +4,7 @@ import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 7;
+  public static final int EXPECTED_ABI_VERSION = 8;
 
   static {
     NativeLibraryLoader.load();
@@ -77,6 +77,14 @@ public final class NativeBindings {
       long maxInterruptChecks,
       long maxHostCalls,
       long maxHostOutputBytes);
+
+  public static native int setBreakpoint(
+      long handle, byte[] moduleNameUtf8, int line, boolean enabled);
+
+  public static native NativeExecutionResult resumeInstance(
+      long handle, HostCallContext hostContext);
+
+  public static native NativeExecutionResult terminatePausedInstance(long handle);
 
   public static native void closeInstance(long handle);
 }

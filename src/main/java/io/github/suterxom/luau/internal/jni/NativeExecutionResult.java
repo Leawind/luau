@@ -9,7 +9,8 @@ public record NativeExecutionResult(
     long currentMemoryBytes,
     long peakMemoryBytes,
     long hostCalls,
-    long hostOutputBytes) {
+    long hostOutputBytes,
+    NativePauseInfo pauseInfo) {
   public NativeExecutionResult {
     values = values == null ? new NativeValue[0] : values.clone();
     messageUtf8 = messageUtf8 == null ? null : messageUtf8.clone();

@@ -3,6 +3,7 @@ package io.github.suterxom.luau.v1.api;
 import io.github.suterxom.luau.internal.jni.NativeBindings;
 import io.github.suterxom.luau.internal.jni.NativeHostRegistry;
 import io.github.suterxom.luau.internal.jni.NativeValueCodec;
+import io.github.suterxom.luau.v1.api.debug.PauseInfo;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 import io.github.suterxom.luau.v1.api.host.HostModule;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * An isolated persistent Luau VM.
@@ -26,10 +28,14 @@ public final class ScriptInstance implements AutoCloseable {
   private final byte[][] bytecodes;
   private final List<HostModule> hostModules;
   private final long maxMemoryBytes;
+  private final ScriptDebugger debugger;
   private long nativeHandle;
   private boolean faulted;
   private boolean initialized;
   private boolean running;
+  private PausedOperation pausedOperation;
+  private HostCallContext pausedHostContext;
+  private PauseInfo pauseInfo;
 
   ScriptInstance(
       byte[] rootModuleNameUtf8,
@@ -51,6 +57,7 @@ public final class ScriptInstance implements AutoCloseable {
             this.bytecodes,
             NativeHostRegistry.create(this.hostModules),
             maxMemoryBytes);
+    this.debugger = new ScriptDebugger(this);
   }
 
   public synchronized ExecutionResult execute() {
@@ -86,9 +93,7 @@ public final class ScriptInstance implements AutoCloseable {
                   budget.maxInterruptChecks(),
                   budget.maxHostCalls(),
                   budget.maxHostOutputBytes()));
-      if (!(result instanceof ExecutionResult.Completed)) {
-        faulted = true;
-      }
+      acceptInvocationResult(result, PausedOperation.EXECUTE, hostContext);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -135,11 +140,7 @@ public final class ScriptInstance implements AutoCloseable {
                   budget.maxInterruptChecks(),
                   budget.maxHostCalls(),
                   budget.maxHostOutputBytes()));
-      if (result instanceof ExecutionResult.Completed) {
-        initialized = true;
-      } else {
-        faulted = true;
-      }
+      acceptInvocationResult(result, PausedOperation.INITIALIZE, hostContext);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -197,9 +198,7 @@ public final class ScriptInstance implements AutoCloseable {
                   budget.maxInterruptChecks(),
                   budget.maxHostCalls(),
                   budget.maxHostOutputBytes()));
-      if (!(result instanceof ExecutionResult.Completed)) {
-        faulted = true;
-      }
+      acceptInvocationResult(result, PausedOperation.INVOKE_EXPORT, hostContext);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -221,6 +220,11 @@ public final class ScriptInstance implements AutoCloseable {
     return ownerThread;
   }
 
+  /** Returns the owner-thread debugger associated with this instance. */
+  public ScriptDebugger debugger() {
+    return debugger;
+  }
+
   /** Replaces a faulted or healthy VM with a clean VM using the same compiled chunk. */
   public synchronized void reset() {
     checkOwnerThread();
@@ -228,6 +232,10 @@ public final class ScriptInstance implements AutoCloseable {
       throw new IllegalStateException("Script instance is closed");
     }
     checkNotRunning();
+    if (pausedOperation != null) {
+      throw new IllegalStateException(
+          "Terminate a paused invocation before resetting its script instance");
+    }
     long replacement =
         NativeBindings.createInstance(
             rootModuleNameUtf8,
@@ -239,6 +247,8 @@ public final class ScriptInstance implements AutoCloseable {
     nativeHandle = replacement;
     faulted = false;
     initialized = false;
+    clearPause();
+    debugger.reapplyAfterReset();
   }
 
   @Override
@@ -248,6 +258,7 @@ public final class ScriptInstance implements AutoCloseable {
     if (nativeHandle != 0) {
       NativeBindings.closeInstance(nativeHandle);
       nativeHandle = 0;
+      clearPause();
       for (byte[] bytecode : bytecodes) {
         Arrays.fill(bytecode, (byte) 0);
       }
@@ -260,6 +271,10 @@ public final class ScriptInstance implements AutoCloseable {
     }
     if (faulted) {
       throw new IllegalStateException("Script instance is faulted");
+    }
+    if (pausedOperation != null) {
+      throw new IllegalStateException(
+          "Script instance is paused; use its debugger to resume or terminate");
     }
   }
 
@@ -280,6 +295,112 @@ public final class ScriptInstance implements AutoCloseable {
     }
   }
 
+  synchronized void checkDebuggerAccess(boolean allowPaused) {
+    checkOwnerThread();
+    if (nativeHandle == 0) {
+      throw new IllegalStateException("Script instance is closed");
+    }
+    if (faulted) {
+      throw new IllegalStateException("Script instance is faulted");
+    }
+    checkNotRunning();
+    if (!allowPaused && pausedOperation != null) {
+      throw new IllegalStateException("Breakpoints cannot change while execution is paused");
+    }
+  }
+
+  synchronized void checkDebuggerReadAccess() {
+    checkOwnerThread();
+    if (nativeHandle == 0) {
+      throw new IllegalStateException("Script instance is closed");
+    }
+    checkNotRunning();
+  }
+
+  synchronized int updateBreakpoint(String moduleName, int line, boolean enabled) {
+    checkDebuggerAccess(false);
+    return NativeBindings.setBreakpoint(
+        nativeHandle,
+        moduleName.getBytes(StandardCharsets.UTF_8),
+        line,
+        enabled);
+  }
+
+  synchronized Optional<PauseInfo> debuggerPauseInfo() {
+    checkDebuggerReadAccess();
+    return Optional.ofNullable(pauseInfo);
+  }
+
+  synchronized ExecutionResult resumePaused() {
+    checkDebuggerAccess(true);
+    if (pausedOperation == null || pausedHostContext == null || pauseInfo == null) {
+      throw new IllegalStateException("Script instance is not paused");
+    }
+
+    PausedOperation operation = pausedOperation;
+    HostCallContext hostContext = pausedHostContext;
+    beginInvocation();
+    try {
+      ExecutionResult result =
+          CompiledChunk.decodeExecutionResult(
+              NativeBindings.resumeInstance(nativeHandle, hostContext));
+      acceptInvocationResult(result, operation, hostContext);
+      return result;
+    } catch (RuntimeException | Error throwable) {
+      faulted = true;
+      clearPause();
+      throw throwable;
+    } finally {
+      running = false;
+    }
+  }
+
+  synchronized ExecutionResult terminatePaused() {
+    checkDebuggerAccess(true);
+    if (pausedOperation == null) {
+      throw new IllegalStateException("Script instance is not paused");
+    }
+
+    ExecutionResult result =
+        CompiledChunk.decodeExecutionResult(
+            NativeBindings.terminatePausedInstance(nativeHandle));
+    if (!(result instanceof ExecutionResult.Terminated)) {
+      faulted = true;
+      clearPause();
+      throw new LinkageError("Native debugger termination returned an invalid result");
+    }
+    faulted = true;
+    clearPause();
+    return result;
+  }
+
+  private void acceptInvocationResult(
+      ExecutionResult result,
+      PausedOperation operation,
+      HostCallContext hostContext) {
+    if (result instanceof ExecutionResult.Paused paused) {
+      pausedOperation = operation;
+      pausedHostContext = hostContext;
+      pauseInfo = paused.pauseInfo();
+      return;
+    }
+
+    clearPause();
+    if (result instanceof ExecutionResult.Completed) {
+      if (operation == PausedOperation.INITIALIZE) {
+        initialized = true;
+      }
+    } else {
+      faulted = true;
+    }
+  }
+
+  private void clearPause() {
+    pausedOperation = null;
+    pausedHostContext = null;
+    pauseInfo = null;
+  }
+
   private static void validateExportName(String name) {
     Objects.requireNonNull(name, "name");
     if (name.isBlank() || name.length() > 256 || name.indexOf('\0') >= 0) {
@@ -295,5 +416,11 @@ public final class ScriptInstance implements AutoCloseable {
       copy[index] = Objects.requireNonNull(copy[index], name + "[" + index + "]").clone();
     }
     return copy;
+  }
+
+  private enum PausedOperation {
+    EXECUTE,
+    INITIALIZE,
+    INVOKE_EXPORT
   }
 }

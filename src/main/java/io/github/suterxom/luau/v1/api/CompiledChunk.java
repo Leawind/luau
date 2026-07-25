@@ -4,7 +4,12 @@ import io.github.suterxom.luau.internal.jni.NativeBindings;
 import io.github.suterxom.luau.internal.jni.NativeExecutionResult;
 import io.github.suterxom.luau.internal.jni.NativeHostRegistry;
 import io.github.suterxom.luau.internal.jni.NativeLuauException;
+import io.github.suterxom.luau.internal.jni.NativePauseInfo;
+import io.github.suterxom.luau.internal.jni.NativeStackFrame;
 import io.github.suterxom.luau.internal.jni.NativeValueCodec;
+import io.github.suterxom.luau.v1.api.debug.PauseInfo;
+import io.github.suterxom.luau.v1.api.debug.SourceLocation;
+import io.github.suterxom.luau.v1.api.debug.StackFrame;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 import io.github.suterxom.luau.v1.api.host.HostModule;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
@@ -185,8 +190,39 @@ public final class CompiledChunk implements AutoCloseable {
       case 8 ->
           new ExecutionResult.LimitExceeded(
               ExecutionResult.LimitExceeded.Kind.HOST_OUTPUT, message, metrics);
+      case 9 -> new ExecutionResult.Paused(decodePauseInfo(result.pauseInfo()), metrics);
+      case 10 -> new ExecutionResult.Terminated(message, metrics);
       default -> throw new LinkageError("Unknown native execution status: " + result.status());
     };
+  }
+
+  private static PauseInfo decodePauseInfo(NativePauseInfo nativePause) {
+    if (nativePause == null) {
+      throw new LinkageError("Native paused execution did not include pause information");
+    }
+    PauseInfo.Reason reason =
+        switch (nativePause.reason()) {
+          case 0 -> PauseInfo.Reason.BREAKPOINT;
+          default -> throw new LinkageError(
+              "Unknown native pause reason: " + nativePause.reason());
+        };
+    SourceLocation location =
+        new SourceLocation(
+            new String(nativePause.moduleNameUtf8(), StandardCharsets.UTF_8),
+            nativePause.line());
+    List<StackFrame> frames =
+        Arrays.stream(nativePause.stackFrames())
+            .map(CompiledChunk::decodeStackFrame)
+            .toList();
+    return new PauseInfo(reason, location, frames);
+  }
+
+  private static StackFrame decodeStackFrame(NativeStackFrame frame) {
+    return new StackFrame(
+        new SourceLocation(
+            new String(frame.moduleNameUtf8(), StandardCharsets.UTF_8),
+            frame.line()),
+        new String(frame.functionNameUtf8(), StandardCharsets.UTF_8));
   }
 
   LuauRuntime runtime() {

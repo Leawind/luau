@@ -16,6 +16,7 @@ val modAuthor = providers.gradleProperty("mod.author").get()
 val modDescription = providers.gradleProperty("mod.description").get()
 val modLicense = providers.gradleProperty("mod.license").get()
 val minecraftVersion = providers.gradleProperty("mod.minecraftVersion").get()
+val packFormat = providers.gradleProperty("mod.packFormat").get()
 val luauVersion = providers.gradleProperty("luau.version").get()
 val luauCommit = providers.gradleProperty("luau.commit").get()
 val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
@@ -187,6 +188,7 @@ tasks.processResources {
         "description" to modDescription,
         "license" to modLicense,
         "minecraftVersion" to minecraftVersion,
+        "packFormat" to packFormat,
         "luauVersion" to luauVersion,
         "luauCommit" to luauCommit,
         "jniAbiVersion" to jniAbiVersion,
@@ -198,6 +200,7 @@ tasks.processResources {
             "fabric.mod.json",
             "META-INF/mods.toml",
             "META-INF/neoforge.mods.toml",
+            "pack.mcmeta",
             "META-INF/luau/runtime.properties",
         ),
     ) {
@@ -361,6 +364,7 @@ val verifyUniversalJar by tasks.registering {
                 "fabric.mod.json",
                 "META-INF/mods.toml",
                 "META-INF/neoforge.mods.toml",
+                "pack.mcmeta",
                 "META-INF/LICENSE",
                 "META-INF/licenses/luau/LICENSE.txt",
                 "META-INF/licenses/luau/lua_LICENSE.txt",

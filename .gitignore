@@ -24,6 +24,13 @@ build/
 .gradle/
 .kotlin/
 
+# cmake
+cmake-build-*/
+CMakeUserPresets.json
+
+# native release aggregation
+prebuilt-natives/
+
 # npm
 node_modules/
 package-lock.json

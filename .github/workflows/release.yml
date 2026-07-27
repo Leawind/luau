@@ -50,7 +50,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Assemble GitHub release
+    name: Assemble and publish release
     needs: native
     runs-on: ubuntu-24.04
 
@@ -70,19 +70,66 @@ jobs:
         with:
           path: prebuilt-natives
 
-      - name: Verify tag version
+      - name: Verify tag and determine release type
+        id: release_metadata
         shell: bash
         run: |
           project_version="$(sed -n 's/^mod.version=//p' gradle.properties)"
           test "${GITHUB_REF_NAME}" = "v${project_version}"
 
+          if ! [[ "${project_version}" =~ ^(0|[1-9][0-9]*)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsupported version format: ${project_version}" >&2
+            exit 1
+          fi
+
+          if [[ "${BASH_REMATCH[1]}" = "0" || "${project_version}" = *-* ]]; then
+            version_type=beta
+          else
+            version_type=release
+          fi
+
+          {
+            echo "version=${project_version}"
+            echo "version_type=${version_type}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Build universal release JAR
         run: ./gradlew verifyUniversalJar sourcesJar -PprebuiltNativesDir=prebuilt-natives
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+      - name: Verify publishing configuration
+        env:
+          MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        shell: bash
+        run: |
+          test -n "${MODRINTH_PROJECT_ID}" || { echo "Missing repository variable MODRINTH_PROJECT_ID" >&2; exit 1; }
+          test -n "${MODRINTH_TOKEN}" || { echo "Missing repository secret MODRINTH_TOKEN" >&2; exit 1; }
+          test -n "${CURSEFORGE_PROJECT_ID}" || { echo "Missing repository variable CURSEFORGE_PROJECT_ID" >&2; exit 1; }
+          test -n "${CURSEFORGE_TOKEN}" || { echo "Missing repository secret CURSEFORGE_TOKEN" >&2; exit 1; }
+
+      - name: Publish release
+        uses: Kira-NT/mc-publish@v3.3
         with:
-          generate_release_notes: true
-          files: |
+          version: ${{ steps.release_metadata.outputs.version }}
+          version-type: ${{ steps.release_metadata.outputs.version_type }}
+          loaders: |
+            fabric
+            forge
+            neoforge
+
+          github-generate-changelog: true
+          github-prerelease: ${{ steps.release_metadata.outputs.version_type != 'release' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-files: |
             build/libs/*-universal.jar
             build/libs/*-sources.jar
+
+          modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-files: build/libs/*-universal.jar
+
+          curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
+          curseforge-files: build/libs/*-universal.jar

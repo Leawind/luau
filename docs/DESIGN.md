@@ -595,10 +595,13 @@ tag 发布流程为：
 2. 从同一个 tag commit 构建全部平台 native artifact。
 3. 在汇总 job 中生成通用 JAR 和 sources JAR。
 4. 运行原生清单、许可证和 JAR 内容校验。
-5. 创建 GitHub Release 并上传产物。
+5. 将通用 JAR 发布到 GitHub Releases、Modrinth 和 CurseForge，并将 sources JAR 附加到
+   GitHub Release。
 
-第一阶段不发布到 Maven、Modrinth 或 CurseForge。将来由维护者编写专门发布脚本时，
-脚本消费已经验证的通用 JAR，不改变本设计规定的构建和安全边界。
+发布类型由项目版本决定：`0.MINOR.PATCH`（包括其预发布后缀）统一标记为 beta，
+`1.0.0` 及以上标记为正式 release。发布前必须配置仓库变量
+`MODRINTH_PROJECT_ID`、`CURSEFORGE_PROJECT_ID`，以及仓库密钥 `MODRINTH_TOKEN`、
+`CURSEFORGE_TOKEN`；缺失任一配置会使工作流失败，避免三个平台的发布状态不一致。
 
 ## 测试
 

@@ -14,6 +14,7 @@ val modId = providers.gradleProperty("mod.id").get()
 val modName = providers.gradleProperty("mod.name").get()
 val modAuthor = providers.gradleProperty("mod.author").get()
 val modDescription = providers.gradleProperty("mod.description").get()
+val modLogo = providers.gradleProperty("mod.logo").get()
 val modLicense = providers.gradleProperty("mod.license").get()
 val minecraftVersion = providers.gradleProperty("mod.minecraftVersion").get()
 val packFormat = providers.gradleProperty("mod.packFormat").get()
@@ -186,6 +187,7 @@ tasks.processResources {
         "version" to version,
         "author" to modAuthor,
         "description" to modDescription,
+        "logo" to modLogo,
         "license" to modLicense,
         "minecraftVersion" to minecraftVersion,
         "packFormat" to packFormat,

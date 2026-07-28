@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="src/main/resources/logo.png" style="width:10em;image-rendering:pixelated">
+
+</div>
+
 # Luau Runtime
 
 Luau Runtime is a Minecraft mod library that lets other mods compile and run sandboxed [Luau](https://luau.org/) scripts. Native Luau libraries are bundled inside the mod JAR, so no native code is downloaded at runtime.

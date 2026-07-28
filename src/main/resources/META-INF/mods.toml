@@ -8,6 +8,8 @@ version = "${version}"
 displayName = "${name}"
 authors = "${author}"
 description = '''${description}'''
+logoFile = "${logo}"
+logoBlur = false
 
 [["dependencies.${id}"]]
 modId = "minecraft"

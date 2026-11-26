@@ -199,6 +199,21 @@ val buildNative by tasks.registering(Exec::class) {
     )
 }
 
+val nativeDistributionDirectory = layout.buildDirectory.dir("native/dist")
+
+val stageNativeDistribution by tasks.registering(Sync::class) {
+    group = "native"
+    description = "Stages the current platform native library alone in a clean directory for CI upload."
+    dependsOn(buildNative)
+
+    into(nativeDistributionDirectory)
+    from(nativeLibrary)
+}
+
+tasks.named("build") {
+    dependsOn(stageNativeDistribution)
+}
+
 val generatedNativeResources = layout.buildDirectory.dir("generated/native-resources")
 
 val stageNativeResources by tasks.registering(Sync::class) {
@@ -235,9 +250,6 @@ val stageNativeResources by tasks.registering(Sync::class) {
 }
 
 tasks.processResources {
-    dependsOn(stageNativeResources)
-    from(generatedNativeResources)
-
     val properties = mapOf(
         "id" to modId,
         "name" to modName,
@@ -335,9 +347,16 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+
+    // The native library is loaded from the classpath, so it only has to reach the test runtime.
+    dependsOn(stageNativeResources)
+    classpath += files(generatedNativeResources)
 }
 
 tasks.jar {
+    dependsOn(stageNativeResources)
+    from(generatedNativeResources)
+
     manifest {
         attributes(
             "Implementation-Title" to modName,
@@ -357,12 +376,18 @@ val stageUniversalNativeResources by tasks.registering {
     group = "native"
     description = "Stages all release native libraries supplied by CI."
 
-    inputs.dir(prebuiltNativesDirectory)
+    val prebuiltNatives = prebuiltNativesDirectory.orNull
+    if(prebuiltNatives != null){
+        inputs.dir(prebuiltNatives)
+    }
     outputs.dir(universalNativeResources)
 
     doLast {
-        val inputRoot = prebuiltNativesDirectory.orNull?.asFile
-            ?: error("Set -PprebuiltNativesDir=<directory> to build the universal JAR")
+        val inputRoot = prebuiltNativesDirectory.orNull?.asFile ?: throw GradleException(
+            "The universal JAR needs the native libraries from the platform builds. " +
+                "Pass -PprebuiltNativesDir=<directory> containing one subdirectory per platform.",
+        )
+        check(inputRoot.isDirectory) { "Prebuilt natives directory does not exist: $inputRoot" }
         val expectedPlatforms = listOf(
             "windows-x86_64",
             "linux-x86_64",

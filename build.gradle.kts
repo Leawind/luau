@@ -422,7 +422,8 @@ val validateClangFormatConfig by tasks.registering {
 
     val sharedConfig = layout.projectDirectory.file("native/.clang-format")
     val upstreamConfig = layout.projectDirectory.file("native/luau/.clang-format")
-    inputs.file(sharedConfig)
+    // Both files are inputs: the guard exists to notice the upstream style changing.
+    inputs.files(sharedConfig, upstreamConfig)
 
     doLast {
         val upstream = upstreamConfig.asFile

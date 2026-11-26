@@ -11,3 +11,6 @@
 
 # style: format non-code files with dprint
 b591c630956787be9797b1c1125999c4094d4331
+
+# style(native): format the JNI layer with clang-format
+35bc8740e9f119b614753d204c0a5bb8a2179e6b

@@ -351,6 +351,10 @@ tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.release = 17
     options.compilerArgs.add("-parameters")
+    // Every warning is fixed rather than suppressed. javac only reports [restricted] for
+    // System.load when compiling for release 24 or later, so release 17 needs no -Xlint:- flag.
+    options.compilerArgs.add("-Xlint:all")
+    options.compilerArgs.add("-Werror")
 }
 
 tasks.test {

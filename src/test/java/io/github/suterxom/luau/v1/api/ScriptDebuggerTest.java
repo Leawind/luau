@@ -161,7 +161,7 @@ class ScriptDebuggerTest {
 
       var completed = assertInstanceOf(ExecutionResult.Completed.class, debugger.resume());
       assertTrue(completed.values().isEmpty());
-      assertTrue(completed.metrics().runtime().compareTo(paused.metrics().runtime()) >= 0);
+      assertTrue(completed.metrics().runtime().compareTo(paused.metrics().runtime()) > 0);
       assertFalse(debugger.isPaused());
       assertTrue(debugger.pauseInfo().isEmpty());
 
@@ -372,7 +372,7 @@ class ScriptDebuggerTest {
           assertInstanceOf(ExecutionResult.Completed.class, instance.debugger().resume());
       assertEquals(List.of(new LuauNumber(42)), completed.values());
       assertEquals(2, completed.metrics().hostCalls());
-      assertTrue(completed.metrics().runtime().compareTo(paused.metrics().runtime()) >= 0);
+      assertTrue(completed.metrics().runtime().compareTo(paused.metrics().runtime()) > 0);
     }
   }
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src/main/resources/logo.png" style="width:10em;image-rendering:pixelated">
+<img src="src/main/resources/logo.png" width="160" alt="Luau Runtime">
 
 </div>
 
@@ -17,6 +17,20 @@ Luau Runtime is a Minecraft mod library that lets other mods compile and run san
 - Limits for execution time, interrupt checks, VM memory, and host calls.
 - Source breakpoints, stepping, pause, resume, and termination support.
 
+## Supported platforms
+
+A release produces one `luau-<version>-universal.jar` that contains every supported platform:
+
+| Platform | Native library |
+| --- | --- |
+| `windows-x86_64` | `luau_jni.dll` |
+| `linux-x86_64` | `libluau_jni.so` |
+| `linux-aarch64` | `libluau_jni.so` |
+| `macos-x86_64` | `libluau_jni.dylib` |
+| `macos-aarch64` | `libluau_jni.dylib` |
+
+musl Linux, Windows ARM64, and Android are not supported.
+
 ## Build
 
 Initialize the Luau submodule, then build the project:
@@ -26,7 +40,7 @@ git submodule update --init --recursive
 ./gradlew build
 ```
 
-A normal build compiles the JNI library for the current platform and embeds it in the produced JAR.
+A normal build compiles the JNI library for the current platform and embeds it in the produced JAR. On Windows the native build requires Visual Studio Build Tools with the C++ workload; the build script imports the MSVC environment itself, so no developer command prompt is needed.
 
 ## Quick start
 
@@ -68,7 +82,43 @@ try (var chunk = compilation.chunk().orElseThrow();
 }
 ```
 
-The root module must return an export table. `initialize()` runs its top-level code once, while `invokeExport()` calls a function from that table. Handle the other `ExecutionResult` variants when scripts may pause, exceed limits, or fail at runtime.
+The root module must return an export table. `initialize()` runs its top-level code once and keeps that table, and `invokeExport(name, arguments)` calls a function from it. Handle the other `ExecutionResult` variants when scripts may pause, exceed limits, or fail at runtime.
+
+## Using it from another mod
+
+No Maven artifacts are published. Consume the released universal JAR as a mod dependency and declare a dependency on the `luau` mod in your loader metadata.
+
+`fabric.mod.json`:
+
+```json
+"depends": {
+  "luau": ">=0.1.0"
+}
+```
+
+`META-INF/mods.toml`:
+
+```toml
+[[dependencies.examplemod]]
+modId = "luau"
+mandatory = true
+versionRange = "[0.1.0,)"
+ordering = "NONE"
+side = "BOTH"
+```
+
+`META-INF/neoforge.mods.toml`:
+
+```toml
+[[dependencies.examplemod]]
+modId = "luau"
+type = "required"
+versionRange = "[0.1.0,)"
+ordering = "NONE"
+side = "BOTH"
+```
+
+The native runtime loads on the first call to the public API.
 
 ## Third-party notices
 

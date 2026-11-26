@@ -10,6 +10,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -349,6 +350,265 @@ private:
     Luau::Config config;
 };
 
+/** JNI classes and members resolved once per process; global references live for its lifetime. */
+struct JniSymbols
+{
+    jclass nativeValue = nullptr;
+    jmethodID nativeValueConstructor = nullptr;
+    jmethodID nativeValueKind = nullptr;
+    jmethodID nativeValueBoolean = nullptr;
+    jmethodID nativeValueNumber = nullptr;
+    jmethodID nativeValueBytes = nullptr;
+    jmethodID nativeValueElements = nullptr;
+    jmethodID nativeValueKeys = nullptr;
+
+    jclass byteArray = nullptr;
+    jclass string = nullptr;
+    jmethodID stringConstructor = nullptr;
+
+    jclass exception = nullptr;
+    jmethodID exceptionConstructor = nullptr;
+
+    jclass stackFrame = nullptr;
+    jmethodID stackFrameConstructor = nullptr;
+
+    jclass pauseInfo = nullptr;
+    jmethodID pauseInfoConstructor = nullptr;
+
+    jclass executionResult = nullptr;
+    jmethodID executionResultConstructor = nullptr;
+
+    jclass compilationDiagnostic = nullptr;
+    jmethodID compilationDiagnosticConstructor = nullptr;
+
+    jclass hostRegistry = nullptr;
+    jmethodID hostRegistryExports = nullptr;
+    jmethodID hostRegistryInvoke = nullptr;
+
+    jclass hostCallResult = nullptr;
+    jmethodID hostCallResultStatus = nullptr;
+    jmethodID hostCallResultValues = nullptr;
+    jmethodID hostCallResultMessage = nullptr;
+    jmethodID hostCallResultOutput = nullptr;
+};
+
+struct JniMethod
+{
+    const char* name;
+    const char* signature;
+    jmethodID* target;
+};
+
+template<size_t Count>
+bool resolveMethods(JNIEnv* env, jclass owner, const JniMethod (&methods)[Count])
+{
+    for (const JniMethod& method : methods)
+    {
+        *method.target = env->GetMethodID(owner, method.name, method.signature);
+        if (*method.target == nullptr)
+            return false;
+    }
+    return true;
+}
+
+jclass resolveClass(JNIEnv* env, const char* name)
+{
+    jclass localClass = env->FindClass(name);
+    if (localClass == nullptr)
+        return nullptr;
+    auto* globalClass = static_cast<jclass>(env->NewGlobalRef(localClass));
+    env->DeleteLocalRef(localClass);
+    return globalClass;
+}
+
+/** Releases the classes of a partially resolved symbol set; a pending JNI exception stays pending. */
+void releaseJniSymbols(JNIEnv* env, JniSymbols& symbols)
+{
+    jclass* classes[] = {
+        &symbols.nativeValue,
+        &symbols.byteArray,
+        &symbols.string,
+        &symbols.exception,
+        &symbols.stackFrame,
+        &symbols.pauseInfo,
+        &symbols.executionResult,
+        &symbols.compilationDiagnostic,
+        &symbols.hostRegistry,
+        &symbols.hostCallResult,
+    };
+    for (jclass* entry : classes)
+    {
+        if (*entry != nullptr)
+        {
+            env->DeleteGlobalRef(*entry);
+            *entry = nullptr;
+        }
+    }
+}
+
+bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
+{
+    symbols.nativeValue = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeValue");
+    if (symbols.nativeValue == nullptr)
+        return false;
+    const JniMethod nativeValueMethods[] = {
+        {
+            "<init>",
+            "(IZD[B[Lio/github/suterxom/luau/internal/jni/NativeValue;[[B)V",
+            &symbols.nativeValueConstructor,
+        },
+        {"kind", "()I", &symbols.nativeValueKind},
+        {"booleanValue", "()Z", &symbols.nativeValueBoolean},
+        {"numberValue", "()D", &symbols.nativeValueNumber},
+        {"bytes", "()[B", &symbols.nativeValueBytes},
+        {
+            "elements",
+            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;",
+            &symbols.nativeValueElements,
+        },
+        {"keysUtf8", "()[[B", &symbols.nativeValueKeys},
+    };
+    if (!resolveMethods(env, symbols.nativeValue, nativeValueMethods))
+        return false;
+
+    symbols.byteArray = resolveClass(env, "[B");
+    if (symbols.byteArray == nullptr)
+        return false;
+
+    symbols.string = resolveClass(env, "java/lang/String");
+    if (symbols.string == nullptr)
+        return false;
+    const JniMethod stringMethods[] = {
+        {"<init>", "([BLjava/lang/String;)V", &symbols.stringConstructor},
+    };
+    if (!resolveMethods(env, symbols.string, stringMethods))
+        return false;
+
+    symbols.exception = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeLuauException");
+    if (symbols.exception == nullptr)
+        return false;
+    const JniMethod exceptionMethods[] = {
+        {"<init>", "(Ljava/lang/String;)V", &symbols.exceptionConstructor},
+    };
+    if (!resolveMethods(env, symbols.exception, exceptionMethods))
+        return false;
+
+    symbols.stackFrame = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeStackFrame");
+    if (symbols.stackFrame == nullptr)
+        return false;
+    const JniMethod stackFrameMethods[] = {
+        {"<init>", "([B[BI)V", &symbols.stackFrameConstructor},
+    };
+    if (!resolveMethods(env, symbols.stackFrame, stackFrameMethods))
+        return false;
+
+    symbols.pauseInfo = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativePauseInfo");
+    if (symbols.pauseInfo == nullptr)
+        return false;
+    const JniMethod pauseInfoMethods[] = {
+        {
+            "<init>",
+            "(I[BI[Lio/github/suterxom/luau/internal/jni/NativeStackFrame;)V",
+            &symbols.pauseInfoConstructor,
+        },
+    };
+    if (!resolveMethods(env, symbols.pauseInfo, pauseInfoMethods))
+        return false;
+
+    symbols.executionResult = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeExecutionResult");
+    if (symbols.executionResult == nullptr)
+        return false;
+    const JniMethod executionResultMethods[] = {
+        {
+            "<init>",
+            "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJJJ"
+            "Lio/github/suterxom/luau/internal/jni/NativePauseInfo;)V",
+            &symbols.executionResultConstructor,
+        },
+    };
+    if (!resolveMethods(env, symbols.executionResult, executionResultMethods))
+        return false;
+
+    symbols.compilationDiagnostic = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
+    if (symbols.compilationDiagnostic == nullptr)
+        return false;
+    const JniMethod compilationDiagnosticMethods[] = {
+        {"<init>", "(I[B[B)V", &symbols.compilationDiagnosticConstructor},
+    };
+    if (!resolveMethods(
+            env,
+            symbols.compilationDiagnostic,
+            compilationDiagnosticMethods))
+        return false;
+
+    symbols.hostRegistry = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeHostRegistry");
+    if (symbols.hostRegistry == nullptr)
+        return false;
+    const JniMethod hostRegistryMethods[] = {
+        {"exports", "([B)[[B", &symbols.hostRegistryExports},
+        {
+            "invoke",
+            "([B[B[Lio/github/suterxom/luau/internal/jni/NativeValue;"
+            "Lio/github/suterxom/luau/v1/api/host/HostCallContext;)"
+            "Lio/github/suterxom/luau/internal/jni/NativeHostCallResult;",
+            &symbols.hostRegistryInvoke,
+        },
+    };
+    if (!resolveMethods(env, symbols.hostRegistry, hostRegistryMethods))
+        return false;
+
+    symbols.hostCallResult = resolveClass(
+        env,
+        "io/github/suterxom/luau/internal/jni/NativeHostCallResult");
+    if (symbols.hostCallResult == nullptr)
+        return false;
+    const JniMethod hostCallResultMethods[] = {
+        {"status", "()I", &symbols.hostCallResultStatus},
+        {
+            "values",
+            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;",
+            &symbols.hostCallResultValues,
+        },
+        {"messageUtf8", "()[B", &symbols.hostCallResultMessage},
+        {"outputBytes", "()J", &symbols.hostCallResultOutput},
+    };
+    return resolveMethods(env, symbols.hostCallResult, hostCallResultMethods);
+}
+
+const JniSymbols* jniSymbols(JNIEnv* env)
+{
+    static JniSymbols symbols;
+    static std::atomic<bool> resolved{false};
+    if (resolved.load(std::memory_order_acquire))
+        return &symbols;
+
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
+    if (resolved.load(std::memory_order_relaxed))
+        return &symbols;
+    if (!resolveJniSymbols(env, symbols))
+    {
+        releaseJniSymbols(env, symbols);
+        return nullptr;
+    }
+    resolved.store(true, std::memory_order_release);
+    return &symbols;
+}
+
 jbyteArray newByteArray(JNIEnv* env, std::string_view bytes)
 {
     jbyteArray result = env->NewByteArray(static_cast<jsize>(bytes.size()));
@@ -371,19 +631,19 @@ jstring newJavaUtf8String(JNIEnv* env, std::string_view value)
     if (bytes == nullptr)
         return nullptr;
 
-    jclass stringClass = env->FindClass("java/lang/String");
-    if (stringClass == nullptr)
-        return nullptr;
-    jmethodID constructor =
-        env->GetMethodID(stringClass, "<init>", "([BLjava/lang/String;)V");
-    if (constructor == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
     jstring charsetName = env->NewStringUTF("UTF-8");
     if (charsetName == nullptr)
         return nullptr;
 
-    jstring result =
-        static_cast<jstring>(env->NewObject(stringClass, constructor, bytes, charsetName));
+    jstring result = static_cast<jstring>(
+        env->NewObject(
+            symbols->string,
+            symbols->stringConstructor,
+            bytes,
+            charsetName));
     env->DeleteLocalRef(charsetName);
     env->DeleteLocalRef(bytes);
     return result;
@@ -391,19 +651,17 @@ jstring newJavaUtf8String(JNIEnv* env, std::string_view value)
 
 void throwNativeException(JNIEnv* env, const std::string& message)
 {
-    jclass exceptionClass =
-        env->FindClass("io/github/suterxom/luau/internal/jni/NativeLuauException");
-    if (exceptionClass == nullptr)
-        return;
-    jmethodID constructor =
-        env->GetMethodID(exceptionClass, "<init>", "(Ljava/lang/String;)V");
-    if (constructor == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return;
     jstring javaMessage = newJavaUtf8String(env, message);
     if (javaMessage == nullptr)
         return;
-    jthrowable exception =
-        static_cast<jthrowable>(env->NewObject(exceptionClass, constructor, javaMessage));
+    jthrowable exception = static_cast<jthrowable>(
+        env->NewObject(
+            symbols->exception,
+            symbols->exceptionConstructor,
+            javaMessage));
     env->DeleteLocalRef(javaMessage);
     if (exception != nullptr)
     {
@@ -968,41 +1226,27 @@ jobject newNativeValue(
     jobjectArray elements = nullptr,
     jobjectArray keysUtf8 = nullptr)
 {
-    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
-    if (valueClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
-
-    jmethodID constructor = env->GetMethodID(
-        valueClass,
-        "<init>",
-        "(IZD[B[Lio/github/suterxom/luau/internal/jni/NativeValue;[[B)V");
-    if (constructor == nullptr)
-    {
-        env->DeleteLocalRef(valueClass);
-        return nullptr;
-    }
 
     jbyteArray byteValue = nullptr;
     if (bytes.has_value())
     {
         byteValue = newByteArray(env, *bytes);
         if (byteValue == nullptr)
-        {
-            env->DeleteLocalRef(valueClass);
             return nullptr;
-        }
     }
 
     jobject result = env->NewObject(
-        valueClass,
-        constructor,
+        symbols->nativeValue,
+        symbols->nativeValueConstructor,
         static_cast<jint>(kind),
         static_cast<jboolean>(booleanValue),
         static_cast<jdouble>(numberValue),
         byteValue,
         elements,
         keysUtf8);
-    env->DeleteLocalRef(valueClass);
     if (byteValue != nullptr)
         env->DeleteLocalRef(byteValue);
     return result;
@@ -1230,15 +1474,14 @@ jobject convertTable(
         return nullptr;
     }
 
-    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
-    if (valueClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
     jobjectArray elements =
         env->NewObjectArray(
             static_cast<jsize>(isArray ? arrayLength : entryCount),
-            valueClass,
+            symbols->nativeValue,
             nullptr);
-    env->DeleteLocalRef(valueClass);
     if (elements == nullptr)
         return nullptr;
 
@@ -1272,15 +1515,8 @@ jobject convertTable(
         return result;
     }
 
-    jclass byteArrayClass = env->FindClass("[B");
-    if (byteArrayClass == nullptr)
-    {
-        env->DeleteLocalRef(elements);
-        return nullptr;
-    }
     jobjectArray keysUtf8 =
-        env->NewObjectArray(static_cast<jsize>(entryCount), byteArrayClass, nullptr);
-    env->DeleteLocalRef(byteArrayClass);
+        env->NewObjectArray(static_cast<jsize>(entryCount), symbols->byteArray, nullptr);
     if (keysUtf8 == nullptr)
     {
         env->DeleteLocalRef(elements);
@@ -1429,25 +1665,15 @@ bool pushNativeValue(
 {
     if (!context.visit(depth))
         return false;
-    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
-    if (valueClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return false;
-    jmethodID kindMethod = env->GetMethodID(valueClass, "kind", "()I");
-    jmethodID booleanMethod = env->GetMethodID(valueClass, "booleanValue", "()Z");
-    jmethodID numberMethod = env->GetMethodID(valueClass, "numberValue", "()D");
-    jmethodID bytesMethod = env->GetMethodID(valueClass, "bytes", "()[B");
-    jmethodID elementsMethod = env->GetMethodID(
-        valueClass,
-        "elements",
-        "()[Lio/github/suterxom/luau/internal/jni/NativeValue;");
-    jmethodID keysMethod = env->GetMethodID(valueClass, "keysUtf8", "()[[B");
-    if (kindMethod == nullptr || booleanMethod == nullptr || numberMethod == nullptr ||
-        bytesMethod == nullptr || elementsMethod == nullptr || keysMethod == nullptr)
-    {
-        env->DeleteLocalRef(valueClass);
-        return false;
-    }
-    env->DeleteLocalRef(valueClass);
+    const jmethodID kindMethod = symbols->nativeValueKind;
+    const jmethodID booleanMethod = symbols->nativeValueBoolean;
+    const jmethodID numberMethod = symbols->nativeValueNumber;
+    const jmethodID bytesMethod = symbols->nativeValueBytes;
+    const jmethodID elementsMethod = symbols->nativeValueElements;
+    const jmethodID keysMethod = symbols->nativeValueKeys;
 
     const jint kind = env->CallIntMethod(value, kindMethod);
     if (env->ExceptionCheck())
@@ -1604,12 +1830,11 @@ jobjectArray newNativeValueArray(
     int resultCount,
     ValueCodecContext& context)
 {
-    jclass valueClass = env->FindClass("io/github/suterxom/luau/internal/jni/NativeValue");
-    if (valueClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
 
-    jobjectArray result = env->NewObjectArray(resultCount, valueClass, nullptr);
-    env->DeleteLocalRef(valueClass);
+    jobjectArray result = env->NewObjectArray(resultCount, symbols->nativeValue, nullptr);
     if (result == nullptr)
         return nullptr;
 
@@ -1650,10 +1875,8 @@ bool pushHostModule(
     if (env == nullptr)
         luaL_error(state, "%s", "Java host environment is unavailable");
 
-    jclass registryClass = env->GetObjectClass(instance->hostRegistry);
-    jmethodID exportsMethod = registryClass == nullptr
-        ? nullptr
-        : env->GetMethodID(registryClass, "exports", "([B)[[B");
+    const JniSymbols* symbols = jniSymbols(env);
+    jmethodID exportsMethod = symbols == nullptr ? nullptr : symbols->hostRegistryExports;
     jbyteArray moduleNameBytes =
         exportsMethod == nullptr ? nullptr : newByteArray(env, moduleName);
     jobjectArray exports = moduleNameBytes == nullptr
@@ -1665,8 +1888,6 @@ bool pushHostModule(
                 moduleNameBytes));
     if (moduleNameBytes != nullptr)
         env->DeleteLocalRef(moduleNameBytes);
-    if (registryClass != nullptr)
-        env->DeleteLocalRef(registryClass);
     if (env->ExceptionCheck())
     {
         reportAndClearJavaException(env);
@@ -1772,15 +1993,8 @@ int invokeHostFunction(lua_State* state)
                 : argumentContext.error.c_str());
     }
 
-    jclass registryClass = env->GetObjectClass(instance->hostRegistry);
-    jmethodID invokeMethod = registryClass == nullptr
-        ? nullptr
-        : env->GetMethodID(
-            registryClass,
-            "invoke",
-            "([B[B[Lio/github/suterxom/luau/internal/jni/NativeValue;"
-            "Lio/github/suterxom/luau/v1/api/host/HostCallContext;)"
-            "Lio/github/suterxom/luau/internal/jni/NativeHostCallResult;");
+    const JniSymbols* symbols = jniSymbols(env);
+    jmethodID invokeMethod = symbols == nullptr ? nullptr : symbols->hostRegistryInvoke;
     jbyteArray moduleNameBytes =
         invokeMethod == nullptr ? nullptr : newByteArray(env, moduleNameView);
     jbyteArray exportNameBytes =
@@ -1800,8 +2014,6 @@ int invokeHostFunction(lua_State* state)
     if (moduleNameBytes != nullptr)
         env->DeleteLocalRef(moduleNameBytes);
     env->DeleteLocalRef(arguments);
-    if (registryClass != nullptr)
-        env->DeleteLocalRef(registryClass);
     if (env->ExceptionCheck() || callResult == nullptr)
     {
         if (callResult != nullptr)
@@ -1810,26 +2022,15 @@ int invokeHostFunction(lua_State* state)
         luaL_error(state, "%s", "Host function failed internally");
     }
 
-    jclass resultClass = env->GetObjectClass(callResult);
-    jmethodID statusMethod =
-        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "status", "()I");
-    jmethodID valuesMethod = resultClass == nullptr
-        ? nullptr
-        : env->GetMethodID(
-            resultClass,
-            "values",
-            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;");
-    jmethodID messageMethod =
-        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "messageUtf8", "()[B");
-    jmethodID outputMethod =
-        resultClass == nullptr ? nullptr : env->GetMethodID(resultClass, "outputBytes", "()J");
+    jmethodID statusMethod = symbols == nullptr ? nullptr : symbols->hostCallResultStatus;
+    jmethodID valuesMethod = symbols == nullptr ? nullptr : symbols->hostCallResultValues;
+    jmethodID messageMethod = symbols == nullptr ? nullptr : symbols->hostCallResultMessage;
+    jmethodID outputMethod = symbols == nullptr ? nullptr : symbols->hostCallResultOutput;
     if (statusMethod == nullptr ||
         valuesMethod == nullptr ||
         messageMethod == nullptr ||
         outputMethod == nullptr)
     {
-        if (resultClass != nullptr)
-            env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function result binding failed internally");
@@ -1838,7 +2039,6 @@ int invokeHostFunction(lua_State* state)
     const jint status = env->CallIntMethod(callResult, statusMethod);
     if (env->ExceptionCheck())
     {
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
@@ -1846,7 +2046,6 @@ int invokeHostFunction(lua_State* state)
     const jlong outputBytes = env->CallLongMethod(callResult, outputMethod);
     if (env->ExceptionCheck() || outputBytes < 0)
     {
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
@@ -1855,7 +2054,6 @@ int invokeHostFunction(lua_State* state)
         static_cast<jbyteArray>(env->CallObjectMethod(callResult, messageMethod));
     if (env->ExceptionCheck())
     {
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
@@ -1866,7 +2064,6 @@ int invokeHostFunction(lua_State* state)
     {
         if (messageBytes != nullptr)
             env->DeleteLocalRef(messageBytes);
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
@@ -1880,7 +2077,6 @@ int invokeHostFunction(lua_State* state)
         env->DeleteLocalRef(values);
         if (messageBytes != nullptr)
             env->DeleteLocalRef(messageBytes);
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         execution.hostOutputBytes =
             output > std::numeric_limits<uint64_t>::max() - execution.hostOutputBytes
@@ -1900,7 +2096,6 @@ int invokeHostFunction(lua_State* state)
         env->DeleteLocalRef(values);
         if (messageBytes != nullptr)
             env->DeleteLocalRef(messageBytes);
-        env->DeleteLocalRef(resultClass);
         env->DeleteLocalRef(callResult);
         if (env->ExceptionCheck())
         {
@@ -1930,7 +2125,6 @@ int invokeHostFunction(lua_State* state)
             if (value != nullptr)
                 env->DeleteLocalRef(value);
             env->DeleteLocalRef(values);
-            env->DeleteLocalRef(resultClass);
             env->DeleteLocalRef(callResult);
             if (env->ExceptionCheck())
             {
@@ -1949,7 +2143,6 @@ int invokeHostFunction(lua_State* state)
         env->DeleteLocalRef(value);
     }
     env->DeleteLocalRef(values);
-    env->DeleteLocalRef(resultClass);
     env->DeleteLocalRef(callResult);
     return resultCount;
 }
@@ -1958,17 +2151,9 @@ jobject newNativeStackFrame(
     JNIEnv* env,
     const DebugStackFrame& frame)
 {
-    jclass frameClass =
-        env->FindClass("io/github/suterxom/luau/internal/jni/NativeStackFrame");
-    if (frameClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
-    jmethodID constructor =
-        env->GetMethodID(frameClass, "<init>", "([B[BI)V");
-    if (constructor == nullptr)
-    {
-        env->DeleteLocalRef(frameClass);
-        return nullptr;
-    }
 
     jbyteArray moduleName = newByteArray(env, frame.moduleName);
     jbyteArray functionName = newByteArray(env, frame.functionName);
@@ -1978,18 +2163,16 @@ jobject newNativeStackFrame(
             env->DeleteLocalRef(moduleName);
         if (functionName != nullptr)
             env->DeleteLocalRef(functionName);
-        env->DeleteLocalRef(frameClass);
         return nullptr;
     }
     jobject result = env->NewObject(
-        frameClass,
-        constructor,
+        symbols->stackFrame,
+        symbols->stackFrameConstructor,
         moduleName,
         functionName,
         static_cast<jint>(frame.line));
     env->DeleteLocalRef(moduleName);
     env->DeleteLocalRef(functionName);
-    env->DeleteLocalRef(frameClass);
     return result;
 }
 
@@ -1997,16 +2180,14 @@ jobject newNativePauseInfo(
     JNIEnv* env,
     const PauseSnapshot& pause)
 {
-    jclass frameClass =
-        env->FindClass("io/github/suterxom/luau/internal/jni/NativeStackFrame");
-    if (frameClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
     jobjectArray frames =
         env->NewObjectArray(
             static_cast<jsize>(pause.stackFrames.size()),
-            frameClass,
+            symbols->stackFrame,
             nullptr);
-    env->DeleteLocalRef(frameClass);
     if (frames == nullptr)
         return nullptr;
 
@@ -2030,37 +2211,21 @@ jobject newNativePauseInfo(
         }
     }
 
-    jclass pauseClass =
-        env->FindClass("io/github/suterxom/luau/internal/jni/NativePauseInfo");
-    if (pauseClass == nullptr)
+    jbyteArray moduleName = newByteArray(env, pause.moduleName);
+    if (moduleName == nullptr)
     {
-        env->DeleteLocalRef(frames);
-        return nullptr;
-    }
-    jmethodID constructor = env->GetMethodID(
-        pauseClass,
-        "<init>",
-        "(I[BI[Lio/github/suterxom/luau/internal/jni/NativeStackFrame;)V");
-    jbyteArray moduleName =
-        constructor == nullptr ? nullptr : newByteArray(env, pause.moduleName);
-    if (constructor == nullptr || moduleName == nullptr)
-    {
-        if (moduleName != nullptr)
-            env->DeleteLocalRef(moduleName);
-        env->DeleteLocalRef(pauseClass);
         env->DeleteLocalRef(frames);
         return nullptr;
     }
 
     jobject result = env->NewObject(
-        pauseClass,
-        constructor,
+        symbols->pauseInfo,
+        symbols->pauseInfoConstructor,
         static_cast<jint>(pause.reason),
         moduleName,
         static_cast<jint>(pause.line),
         frames);
     env->DeleteLocalRef(moduleName);
-    env->DeleteLocalRef(pauseClass);
     env->DeleteLocalRef(frames);
     return result;
 }
@@ -2074,20 +2239,9 @@ jobject newNativeExecutionResult(
     const ExecutionContext& context,
     const PauseSnapshot* pause = nullptr)
 {
-    jclass resultClass =
-        env->FindClass("io/github/suterxom/luau/internal/jni/NativeExecutionResult");
-    if (resultClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
-    jmethodID constructor = env->GetMethodID(
-        resultClass,
-        "<init>",
-        "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJJJ"
-        "Lio/github/suterxom/luau/internal/jni/NativePauseInfo;)V");
-    if (constructor == nullptr)
-    {
-        env->DeleteLocalRef(resultClass);
-        return nullptr;
-    }
 
     jbyteArray messageBytes = message.empty() ? nullptr : newByteArray(env, message);
     if (!message.empty() && messageBytes == nullptr)
@@ -2101,8 +2255,8 @@ jobject newNativeExecutionResult(
     }
 
     jobject result = env->NewObject(
-        resultClass,
-        constructor,
+        symbols->executionResult,
+        symbols->executionResultConstructor,
         static_cast<jint>(status),
         values,
         messageBytes,
@@ -2113,7 +2267,6 @@ jobject newNativeExecutionResult(
         static_cast<jlong>(context.hostCalls),
         static_cast<jlong>(context.hostOutputBytes),
         pauseInfo);
-    env->DeleteLocalRef(resultClass);
     if (messageBytes != nullptr)
         env->DeleteLocalRef(messageBytes);
     if (pauseInfo != nullptr)
@@ -2593,27 +2746,16 @@ jobjectArray typecheckImpl(
         }
     }
 
-    jclass diagnosticClass = env->FindClass(
-        "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
-    if (diagnosticClass == nullptr)
+    const JniSymbols* symbols = jniSymbols(env);
+    if (symbols == nullptr)
         return nullptr;
-    jmethodID constructor =
-        env->GetMethodID(diagnosticClass, "<init>", "(I[B[B)V");
-    if (constructor == nullptr)
-    {
-        env->DeleteLocalRef(diagnosticClass);
-        return nullptr;
-    }
     jobjectArray result =
         env->NewObjectArray(
             static_cast<jsize>(diagnostics.size()),
-            diagnosticClass,
+            symbols->compilationDiagnostic,
             nullptr);
     if (result == nullptr)
-    {
-        env->DeleteLocalRef(diagnosticClass);
         return nullptr;
-    }
 
     for (size_t index = 0; index < diagnostics.size(); ++index)
     {
@@ -2627,13 +2769,12 @@ jobjectArray typecheckImpl(
                 env->DeleteLocalRef(moduleName);
             if (message != nullptr)
                 env->DeleteLocalRef(message);
-            env->DeleteLocalRef(diagnosticClass);
             env->DeleteLocalRef(result);
             return nullptr;
         }
         jobject diagnostic = env->NewObject(
-            diagnosticClass,
-            constructor,
+            symbols->compilationDiagnostic,
+            symbols->compilationDiagnosticConstructor,
             static_cast<jint>(diagnostics[index].stage),
             moduleName,
             message);
@@ -2641,7 +2782,6 @@ jobjectArray typecheckImpl(
         env->DeleteLocalRef(message);
         if (diagnostic == nullptr)
         {
-            env->DeleteLocalRef(diagnosticClass);
             env->DeleteLocalRef(result);
             return nullptr;
         }
@@ -2652,12 +2792,10 @@ jobjectArray typecheckImpl(
         env->DeleteLocalRef(diagnostic);
         if (env->ExceptionCheck())
         {
-            env->DeleteLocalRef(diagnosticClass);
             env->DeleteLocalRef(result);
             return nullptr;
         }
     }
-    env->DeleteLocalRef(diagnosticClass);
     return result;
 }
 

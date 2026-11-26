@@ -120,14 +120,12 @@ void* limitedAllocate(void* userdata, void* pointer, size_t oldSize, size_t newS
     auto* context = static_cast<ExecutionContext*>(userdata);
     if (newSize == 0)
     {
-        context->currentMemory =
-            oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
+        context->currentMemory = oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
         std::free(pointer);
         return nullptr;
     }
 
-    const size_t memoryWithoutOld =
-        oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
+    const size_t memoryWithoutOld = oldSize <= context->currentMemory ? context->currentMemory - oldSize : 0;
     if (newSize > context->maxMemory - std::min(memoryWithoutOld, context->maxMemory))
     {
         context->exceededLimit = EXECUTION_MEMORY_LIMIT;
@@ -191,10 +189,7 @@ void inheritScriptThread(lua_State* parent, lua_State* child);
 void debuggerBreak(lua_State* state, lua_Debug* debug);
 void debuggerStep(lua_State* state, lua_Debug* debug);
 void debuggerInterrupt(lua_State* state, lua_Debug* debug);
-bool pushHostModule(
-    lua_State* state,
-    NativeScriptInstance* instance,
-    std::string_view moduleName);
+bool pushHostModule(lua_State* state, NativeScriptInstance* instance, std::string_view moduleName);
 int invokeHostFunction(lua_State* state);
 
 struct NativeScriptInstance
@@ -232,7 +227,8 @@ struct NativeScriptInstance
         std::string rootModuleName,
         std::unordered_map<std::string, std::string> moduleBytecodes,
         jobject hostRegistry,
-        size_t maxMemory)
+        size_t maxMemory
+    )
         : globalState(nullptr)
         , rootModuleName(std::move(rootModuleName))
         , moduleBytecodes(std::move(moduleBytecodes))
@@ -249,12 +245,7 @@ struct NativeScriptInstance
             return;
 
         luaL_openlibs(globalState.get());
-        lua_pushcclosurek(
-            globalState.get(),
-            requireSourceModule,
-            "require",
-            0,
-            continueSourceModule);
+        lua_pushcclosurek(globalState.get(), requireSourceModule, "require", 0, continueSourceModule);
         lua_setglobal(globalState.get(), "require");
         luaL_sandbox(globalState.get());
         lua_Callbacks* callbacks = lua_callbacks(globalState.get());
@@ -285,17 +276,14 @@ struct NativeScriptInstance
 
     bool valid() const
     {
-        return hostRegistry != nullptr &&
-            globalState != nullptr &&
-            thread != nullptr &&
-            moduleBytecodes.find(rootModuleName) != moduleBytecodes.end();
+        return hostRegistry != nullptr && globalState != nullptr && thread != nullptr &&
+               moduleBytecodes.find(rootModuleName) != moduleBytecodes.end();
     }
 
     JNIEnv* environment() const
     {
         JNIEnv* env = nullptr;
-        if (javaVm == nullptr ||
-            javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) != JNI_OK)
+        if (javaVm == nullptr || javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) != JNI_OK)
             return nullptr;
         return env;
     }
@@ -304,8 +292,7 @@ struct NativeScriptInstance
 class InMemorySourceResolver final : public Luau::FileResolver
 {
 public:
-    explicit InMemorySourceResolver(
-        std::unordered_map<std::string, std::string> sources)
+    explicit InMemorySourceResolver(std::unordered_map<std::string, std::string> sources)
         : sources(std::move(sources))
     {
     }
@@ -318,14 +305,10 @@ public:
         return Luau::SourceCode{source->second, Luau::SourceCode::Module};
     }
 
-    std::optional<Luau::ModuleInfo> resolveModule(
-        const Luau::ModuleInfo*,
-        Luau::AstExpr* expression,
-        const Luau::TypeCheckLimits&) override
+    std::optional<Luau::ModuleInfo> resolveModule(const Luau::ModuleInfo*, Luau::AstExpr* expression, const Luau::TypeCheckLimits&) override
     {
         if (const auto* name = expression->as<Luau::AstExprConstantString>())
-            return Luau::ModuleInfo{
-                std::string(name->value.data, name->value.size)};
+            return Luau::ModuleInfo{std::string(name->value.data, name->value.size)};
         return std::nullopt;
     }
 
@@ -448,9 +431,7 @@ void releaseJniSymbols(JNIEnv* env, JniSymbols& symbols)
 
 bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
 {
-    symbols.nativeValue = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeValue");
+    symbols.nativeValue = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeValue");
     if (symbols.nativeValue == nullptr)
         return false;
     const JniMethod nativeValueMethods[] = {
@@ -486,9 +467,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.string, stringMethods))
         return false;
 
-    symbols.exception = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeLuauException");
+    symbols.exception = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeLuauException");
     if (symbols.exception == nullptr)
         return false;
     const JniMethod exceptionMethods[] = {
@@ -497,9 +476,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.exception, exceptionMethods))
         return false;
 
-    symbols.stackFrame = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeStackFrame");
+    symbols.stackFrame = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeStackFrame");
     if (symbols.stackFrame == nullptr)
         return false;
     const JniMethod stackFrameMethods[] = {
@@ -508,9 +485,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.stackFrame, stackFrameMethods))
         return false;
 
-    symbols.pauseInfo = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativePauseInfo");
+    symbols.pauseInfo = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativePauseInfo");
     if (symbols.pauseInfo == nullptr)
         return false;
     const JniMethod pauseInfoMethods[] = {
@@ -523,9 +498,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.pauseInfo, pauseInfoMethods))
         return false;
 
-    symbols.executionResult = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeExecutionResult");
+    symbols.executionResult = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeExecutionResult");
     if (symbols.executionResult == nullptr)
         return false;
     const JniMethod executionResultMethods[] = {
@@ -539,23 +512,16 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.executionResult, executionResultMethods))
         return false;
 
-    symbols.compilationDiagnostic = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
+    symbols.compilationDiagnostic = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
     if (symbols.compilationDiagnostic == nullptr)
         return false;
     const JniMethod compilationDiagnosticMethods[] = {
         {"<init>", "(I[B[BIIII)V", &symbols.compilationDiagnosticConstructor},
     };
-    if (!resolveMethods(
-            env,
-            symbols.compilationDiagnostic,
-            compilationDiagnosticMethods))
+    if (!resolveMethods(env, symbols.compilationDiagnostic, compilationDiagnosticMethods))
         return false;
 
-    symbols.hostRegistry = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeHostRegistry");
+    symbols.hostRegistry = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeHostRegistry");
     if (symbols.hostRegistry == nullptr)
         return false;
     const JniMethod hostRegistryMethods[] = {
@@ -571,9 +537,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.hostRegistry, hostRegistryMethods))
         return false;
 
-    symbols.hostCallResult = resolveClass(
-        env,
-        "io/github/suterxom/luau/internal/jni/NativeHostCallResult");
+    symbols.hostCallResult = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeHostCallResult");
     if (symbols.hostCallResult == nullptr)
         return false;
     const JniMethod hostCallResultMethods[] = {
@@ -616,11 +580,7 @@ jbyteArray newByteArray(JNIEnv* env, std::string_view bytes)
         return nullptr;
     if (!bytes.empty())
     {
-        env->SetByteArrayRegion(
-            result,
-            0,
-            static_cast<jsize>(bytes.size()),
-            reinterpret_cast<const jbyte*>(bytes.data()));
+        env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<const jbyte*>(bytes.data()));
     }
     return result;
 }
@@ -638,12 +598,7 @@ jstring newJavaUtf8String(JNIEnv* env, std::string_view value)
     if (charsetName == nullptr)
         return nullptr;
 
-    jstring result = static_cast<jstring>(
-        env->NewObject(
-            symbols->string,
-            symbols->stringConstructor,
-            bytes,
-            charsetName));
+    jstring result = static_cast<jstring>(env->NewObject(symbols->string, symbols->stringConstructor, bytes, charsetName));
     env->DeleteLocalRef(charsetName);
     env->DeleteLocalRef(bytes);
     return result;
@@ -657,11 +612,7 @@ void throwNativeException(JNIEnv* env, const std::string& message)
     jstring javaMessage = newJavaUtf8String(env, message);
     if (javaMessage == nullptr)
         return;
-    jthrowable exception = static_cast<jthrowable>(
-        env->NewObject(
-            symbols->exception,
-            symbols->exceptionConstructor,
-            javaMessage));
+    jthrowable exception = static_cast<jthrowable>(env->NewObject(symbols->exception, symbols->exceptionConstructor, javaMessage));
     env->DeleteLocalRef(javaMessage);
     if (exception != nullptr)
     {
@@ -745,8 +696,7 @@ bool isValidUtf8(std::string_view value)
             return false;
         for (size_t continuation = 2; continuation <= continuationCount; ++continuation)
         {
-            const auto byte =
-                static_cast<unsigned char>(value[index + continuation]);
+            const auto byte = static_cast<unsigned char>(value[index + continuation]);
             if (byte < 0x80 || byte > 0xbf)
                 return false;
         }
@@ -760,7 +710,8 @@ bool readNamedByteArrays(
     jobjectArray namesUtf8,
     jobjectArray values,
     std::unordered_map<std::string, std::string>& output,
-    std::vector<std::string>& orderedNames)
+    std::vector<std::string>& orderedNames
+)
 {
     if (namesUtf8 == nullptr || values == nullptr)
     {
@@ -772,9 +723,7 @@ bool readNamedByteArrays(
         return false;
     if (count <= 0 || count > 64 || env->GetArrayLength(values) != count)
     {
-        throwNativeException(
-            env,
-            "Native module arrays must have equal lengths between 1 and 64");
+        throwNativeException(env, "Native module arrays must have equal lengths between 1 and 64");
         return false;
     }
 
@@ -782,10 +731,8 @@ bool readNamedByteArrays(
     orderedNames.reserve(static_cast<size_t>(count));
     for (jsize index = 0; index < count; ++index)
     {
-        auto nameBytes =
-            static_cast<jbyteArray>(env->GetObjectArrayElement(namesUtf8, index));
-        auto valueBytes =
-            static_cast<jbyteArray>(env->GetObjectArrayElement(values, index));
+        auto nameBytes = static_cast<jbyteArray>(env->GetObjectArrayElement(namesUtf8, index));
+        auto valueBytes = static_cast<jbyteArray>(env->GetObjectArrayElement(values, index));
         if (env->ExceptionCheck() || nameBytes == nullptr || valueBytes == nullptr)
         {
             if (nameBytes != nullptr)
@@ -803,9 +750,7 @@ bool readNamedByteArrays(
         env->DeleteLocalRef(valueBytes);
         if (env->ExceptionCheck())
             return false;
-        if (name.empty() || name.size() > 256 ||
-            !isValidUtf8(name) ||
-            name.find('\0') != std::string::npos)
+        if (name.empty() || name.size() > 256 || !isValidUtf8(name) || name.find('\0') != std::string::npos)
         {
             throwNativeException(env, "Native module name is invalid");
             return false;
@@ -827,9 +772,7 @@ std::string luaError(lua_State* state)
     return message == nullptr ? "Unknown Luau error" : std::string(message, length);
 }
 
-std::string debugModuleName(
-    const NativeScriptInstance& instance,
-    const char* source)
+std::string debugModuleName(const NativeScriptInstance& instance, const char* source)
 {
     if (source == nullptr || source[0] == '\0')
         return instance.rootModuleName;
@@ -837,8 +780,7 @@ std::string debugModuleName(
     std::string name(source);
     if (instance.moduleBytecodes.find(name) != instance.moduleBytecodes.end())
         return name;
-    if ((name[0] == '=' || name[0] == '@') &&
-        instance.moduleBytecodes.find(name.substr(1)) != instance.moduleBytecodes.end())
+    if ((name[0] == '=' || name[0] == '@') && instance.moduleBytecodes.find(name.substr(1)) != instance.moduleBytecodes.end())
         return name.substr(1);
     return name;
 }
@@ -854,15 +796,12 @@ std::string debugFunctionName(const char* name)
         return std::string(name, length);
 
     size_t truncatedLength = MAX_FUNCTION_NAME_BYTES;
-    while (truncatedLength > 0 &&
-           (static_cast<unsigned char>(name[truncatedLength]) & 0xc0) == 0x80)
+    while (truncatedLength > 0 && (static_cast<unsigned char>(name[truncatedLength]) & 0xc0) == 0x80)
         --truncatedLength;
     return std::string(name, truncatedLength);
 }
 
-void appendDebugStackFrames(
-    NativeScriptInstance& instance,
-    lua_State* state)
+void appendDebugStackFrames(NativeScriptInstance& instance, lua_State* state)
 {
     if (!instance.pauseSnapshot.has_value())
         return;
@@ -880,10 +819,7 @@ void appendDebugStackFrames(
         if (snapshot.stackFrames.size() >= MAX_STACK_FRAMES)
             continue;
 
-        DebugStackFrame captured{
-            debugModuleName(instance, frame.source),
-            debugFunctionName(frame.name),
-            frame.currentline};
+        DebugStackFrame captured{debugModuleName(instance, frame.source), debugFunctionName(frame.name), frame.currentline};
         if (snapshot.line == 0)
         {
             snapshot.moduleName = captured.moduleName;
@@ -917,15 +853,9 @@ void clearSingleStep(NativeScriptInstance& instance)
     instance.stepDormantDepth = 0;
 }
 
-void appendPausedParent(
-    NativeScriptInstance& instance,
-    lua_State* child,
-    lua_State* parent)
+void appendPausedParent(NativeScriptInstance& instance, lua_State* child, lua_State* parent)
 {
-    if (!instance.paused ||
-        instance.pausedThreads.empty() ||
-        instance.pausedThreads.back() != child ||
-        parent == child)
+    if (!instance.paused || instance.pausedThreads.empty() || instance.pausedThreads.back() != child || parent == child)
         return;
 
     instance.pausedThreads.push_back(parent);
@@ -940,10 +870,8 @@ void inheritScriptThread(lua_State* parent, lua_State* child)
 
 bool pauseForDebugger(lua_State* state, int reason)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
-    if (instance == nullptr ||
-        instance->activeOperation == ActiveOperation::None)
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    if (instance == nullptr || instance->activeOperation == ActiveOperation::None)
         return false;
 
     PauseSnapshot snapshot;
@@ -968,8 +896,7 @@ bool pauseForDebugger(lua_State* state, int reason)
 
 void debuggerBreak(lua_State* state, lua_Debug*)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr)
         return;
     if (instance->skipBreakpointOnce)
@@ -982,32 +909,24 @@ void debuggerBreak(lua_State* state, lua_Debug*)
 
 void debuggerStep(lua_State* state, lua_Debug*)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr || instance->stepMode == StepMode::None)
         return;
 
     lua_Debug frame{};
-    if (lua_getinfo(state, 0, "sl", &frame) == 0 ||
-        frame.currentline <= 0)
+    if (lua_getinfo(state, 0, "sl", &frame) == 0 || frame.currentline <= 0)
         return;
-    const std::string moduleName =
-        debugModuleName(*instance, frame.source);
-    const bool changedLocation =
-        moduleName != instance->stepStartModule ||
-        frame.currentline != instance->stepStartLine;
+    const std::string moduleName = debugModuleName(*instance, frame.source);
+    const bool changedLocation = moduleName != instance->stepStartModule || frame.currentline != instance->stepStartLine;
 
     bool shouldPause = false;
     if (instance->stepMode == StepMode::Into)
         shouldPause = changedLocation;
     else if (state == instance->stepActiveThread)
     {
-        const size_t depth =
-            debugStackDepth(state) + instance->stepDormantDepth;
+        const size_t depth = debugStackDepth(state) + instance->stepDormantDepth;
         if (instance->stepMode == StepMode::Over)
-            shouldPause =
-                depth < instance->stepStartDepth ||
-                (depth == instance->stepStartDepth && changedLocation);
+            shouldPause = depth < instance->stepStartDepth || (depth == instance->stepStartDepth && changedLocation);
         else if (instance->stepMode == StepMode::Out)
             shouldPause = depth < instance->stepStartDepth;
     }
@@ -1018,22 +937,14 @@ void debuggerStep(lua_State* state, lua_Debug*)
 
 void debuggerInterrupt(lua_State* state, lua_Debug* debug)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr || debug == nullptr || debug->userdata == nullptr)
         return;
 
-    appendPausedParent(
-        *instance,
-        static_cast<lua_State*>(debug->userdata),
-        state);
+    appendPausedParent(*instance, static_cast<lua_State*>(debug->userdata), state);
 }
 
-void applyModuleBreakpoints(
-    NativeScriptInstance& instance,
-    lua_State* state,
-    const std::string& moduleName,
-    int closureIndex)
+void applyModuleBreakpoints(NativeScriptInstance& instance, lua_State* state, const std::string& moduleName, int closureIndex)
 {
     const auto configured = instance.breakpoints.find(moduleName);
     if (configured == instance.breakpoints.end())
@@ -1044,17 +955,12 @@ void applyModuleBreakpoints(
         lua_breakpoint(state, absoluteIndex, line, true);
 }
 
-void rememberModuleClosure(
-    NativeScriptInstance& instance,
-    lua_State* state,
-    const std::string& moduleName,
-    int closureIndex)
+void rememberModuleClosure(NativeScriptInstance& instance, lua_State* state, const std::string& moduleName, int closureIndex)
 {
     const int absoluteIndex = lua_absindex(state, closureIndex);
     applyModuleBreakpoints(instance, state, moduleName, absoluteIndex);
     const int reference = lua_ref(state, absoluteIndex);
-    if (const auto existing = instance.moduleClosureRefs.find(moduleName);
-        existing != instance.moduleClosureRefs.end())
+    if (const auto existing = instance.moduleClosureRefs.find(moduleName); existing != instance.moduleClosureRefs.end())
     {
         lua_unref(state, existing->second);
         existing->second = reference;
@@ -1063,12 +969,7 @@ void rememberModuleClosure(
         instance.moduleClosureRefs.emplace(moduleName, reference);
 }
 
-int finishSourceModule(
-    lua_State* state,
-    NativeScriptInstance& instance,
-    lua_State* moduleThread,
-    const std::string& moduleName,
-    int executionStatus)
+int finishSourceModule(lua_State* state, NativeScriptInstance& instance, lua_State* moduleThread, const std::string& moduleName, int executionStatus)
 {
     if (executionStatus == LUA_BREAK)
     {
@@ -1081,17 +982,14 @@ int finishSourceModule(
         if (executionStatus == LUA_YIELD)
             errorMessage = "Required module cannot yield: " + moduleName;
         else
-            errorMessage =
-                "Error while running required module " + moduleName + ": " +
-                luaError(moduleThread);
+            errorMessage = "Error while running required module " + moduleName + ": " + luaError(moduleThread);
         instance.loadingModules.erase(moduleName);
         lua_pop(state, 1);
         luaL_error(state, "%s", errorMessage.c_str());
     }
     if (lua_gettop(moduleThread) != 1)
     {
-        const std::string errorMessage =
-            "Required module must return exactly one value: " + moduleName;
+        const std::string errorMessage = "Required module must return exactly one value: " + moduleName;
         instance.loadingModules.erase(moduleName);
         lua_pop(state, 1);
         luaL_error(state, "%s", errorMessage.c_str());
@@ -1107,33 +1005,22 @@ int finishSourceModule(
 
 int continueSourceModule(lua_State* state, int)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr)
         luaL_error(state, "%s", "Luau require context is unavailable");
-    if (lua_gettop(state) < 2 ||
-        lua_type(state, 1) != LUA_TSTRING ||
-        lua_type(state, -1) != LUA_TTHREAD)
+    if (lua_gettop(state) < 2 || lua_type(state, 1) != LUA_TSTRING || lua_type(state, -1) != LUA_TTHREAD)
         luaL_error(state, "%s", "Luau require continuation state is invalid");
 
     size_t nameLength = 0;
     const char* nameBytes = lua_tolstring(state, 1, &nameLength);
-    const std::string moduleName(
-        nameBytes == nullptr ? "" : nameBytes,
-        nameLength);
+    const std::string moduleName(nameBytes == nullptr ? "" : nameBytes, nameLength);
     lua_State* moduleThread = lua_tothread(state, -1);
-    return finishSourceModule(
-        state,
-        *instance,
-        moduleThread,
-        moduleName,
-        lua_status(moduleThread));
+    return finishSourceModule(state, *instance, moduleThread, moduleName, lua_status(moduleThread));
 }
 
 int requireSourceModule(lua_State* state)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr)
         luaL_error(state, "%s", "Luau require context is unavailable");
     if (lua_gettop(state) != 1 || lua_type(state, 1) != LUA_TSTRING)
@@ -1141,30 +1028,21 @@ int requireSourceModule(lua_State* state)
 
     size_t nameLength = 0;
     const char* nameBytes = lua_tolstring(state, 1, &nameLength);
-    const std::string_view nameView(
-        nameBytes == nullptr ? "" : nameBytes,
-        nameLength);
-    if (!isValidUtf8(nameView) ||
-        nameView.find('\0') != std::string_view::npos)
+    const std::string_view nameView(nameBytes == nullptr ? "" : nameBytes, nameLength);
+    if (!isValidUtf8(nameView) || nameView.find('\0') != std::string_view::npos)
     {
-        luaL_error(
-            state,
-            "%s",
-            "require module name must be valid UTF-8 without NUL");
+        luaL_error(state, "%s", "require module name must be valid UTF-8 without NUL");
     }
     const std::string moduleName(nameView);
 
-    if (const auto cached = instance->moduleCache.find(moduleName);
-        cached != instance->moduleCache.end())
+    if (const auto cached = instance->moduleCache.find(moduleName); cached != instance->moduleCache.end())
     {
         lua_getref(state, cached->second);
         return 1;
     }
-    if (instance->loadingModules.find(moduleName) !=
-        instance->loadingModules.end())
+    if (instance->loadingModules.find(moduleName) != instance->loadingModules.end())
     {
-        const std::string message =
-            "Circular module dependency while requiring: " + moduleName;
+        const std::string message = "Circular module dependency while requiring: " + moduleName;
         luaL_error(state, "%s", message.c_str());
     }
 
@@ -1177,8 +1055,7 @@ int requireSourceModule(lua_State* state)
             instance->moduleCache.emplace(moduleName, reference);
             return 1;
         }
-        const std::string message =
-            "Module is not registered in this program: " + moduleName;
+        const std::string message = "Module is not registered in this program: " + moduleName;
         luaL_error(state, "%s", message.c_str());
     }
 
@@ -1189,18 +1066,10 @@ int requireSourceModule(lua_State* state)
     luaL_sandboxthread(moduleThread);
     lua_setthreaddata(moduleThread, instance);
 
-    const int loadStatus =
-        luau_load(
-            moduleThread,
-            moduleName.c_str(),
-            module->second.data(),
-            module->second.size(),
-            0);
+    const int loadStatus = luau_load(moduleThread, moduleName.c_str(), module->second.data(), module->second.size(), 0);
     if (loadStatus != LUA_OK)
     {
-        const std::string errorMessage =
-            "Failed to load required module " + moduleName + ": " +
-            luaError(moduleThread);
+        const std::string errorMessage = "Failed to load required module " + moduleName + ": " + luaError(moduleThread);
         instance->loadingModules.erase(moduleName);
         lua_pop(state, 1);
         luaL_error(state, "%s", errorMessage.c_str());
@@ -1209,12 +1078,7 @@ int requireSourceModule(lua_State* state)
 
     lua_singlestep(moduleThread, instance->stepMode != StepMode::None);
     const int executionStatus = lua_resume(moduleThread, state, 0);
-    return finishSourceModule(
-        state,
-        *instance,
-        moduleThread,
-        moduleName,
-        executionStatus);
+    return finishSourceModule(state, *instance, moduleThread, moduleName, executionStatus);
 }
 
 jobject newNativeValue(
@@ -1224,7 +1088,8 @@ jobject newNativeValue(
     double numberValue = 0.0,
     std::optional<std::string_view> bytes = std::nullopt,
     jobjectArray elements = nullptr,
-    jobjectArray keysUtf8 = nullptr)
+    jobjectArray keysUtf8 = nullptr
+)
 {
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
@@ -1246,7 +1111,8 @@ jobject newNativeValue(
         static_cast<jdouble>(numberValue),
         byteValue,
         elements,
-        keysUtf8);
+        keysUtf8
+    );
     if (byteValue != nullptr)
         env->DeleteLocalRef(byteValue);
     return result;
@@ -1300,28 +1166,18 @@ struct ValueCodecContext
         if (depth > VALUE_MAX_DEPTH)
             return fail("Luau value exceeds maximum depth " + std::to_string(VALUE_MAX_DEPTH), true);
         if (++nodes > VALUE_MAX_NODES)
-            return fail(
-                "Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES),
-                true);
+            return fail("Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES), true);
         return true;
     }
 
     bool addStringBytes(size_t count)
     {
-        return addBytes(
-            "string",
-            stringBytes,
-            count,
-            VALUE_MAX_STRING_BYTES);
+        return addBytes("string", stringBytes, count, VALUE_MAX_STRING_BYTES);
     }
 
     bool addBufferBytes(size_t count)
     {
-        return addBytes(
-            "buffer",
-            bufferBytes,
-            count,
-            VALUE_MAX_BUFFER_BYTES);
+        return addBytes("buffer", bufferBytes, count, VALUE_MAX_BUFFER_BYTES);
     }
 
     bool fail(std::string message, bool isLimit = false)
@@ -1338,22 +1194,12 @@ private:
     lua_State* state;
     std::vector<int> arrayReferences;
 
-    bool addBytes(
-        std::string_view kind,
-        size_t& current,
-        size_t count,
-        size_t maximum)
+    bool addBytes(std::string_view kind, size_t& current, size_t count, size_t maximum)
     {
         if (count > maximum - std::min(current, maximum))
-            return fail(
-                "Luau value exceeds maximum " + std::string(kind) +
-                    " byte count " + std::to_string(maximum),
-                true);
+            return fail("Luau value exceeds maximum " + std::string(kind) + " byte count " + std::to_string(maximum), true);
         if (count > VALUE_MAX_TOTAL_BYTES - std::min(totalBytes, VALUE_MAX_TOTAL_BYTES))
-            return fail(
-                "Luau value exceeds maximum total byte count " +
-                    std::to_string(VALUE_MAX_TOTAL_BYTES),
-                true);
+            return fail("Luau value exceeds maximum total byte count " + std::to_string(VALUE_MAX_TOTAL_BYTES), true);
         current += count;
         totalBytes += count;
         return true;
@@ -1371,19 +1217,9 @@ struct ActiveTableGuard
     }
 };
 
-jobject convertValue(
-    JNIEnv* env,
-    lua_State* state,
-    int index,
-    ValueCodecContext& context,
-    size_t depth);
+jobject convertValue(JNIEnv* env, lua_State* state, int index, ValueCodecContext& context, size_t depth);
 
-jobject convertTable(
-    JNIEnv* env,
-    lua_State* state,
-    int index,
-    ValueCodecContext& context,
-    size_t depth)
+jobject convertTable(JNIEnv* env, lua_State* state, int index, ValueCodecContext& context, size_t depth)
 {
     const int tableIndex = lua_absindex(state, index);
     if (lua_getmetatable(state, tableIndex))
@@ -1414,8 +1250,7 @@ jobject convertTable(
         if (keyType == LUA_TNUMBER || keyType == LUA_TINTEGER)
         {
             const double number = lua_tonumber(state, -2);
-            if (!std::isfinite(number) || number < 1 || std::floor(number) != number ||
-                number > static_cast<double>(std::numeric_limits<int>::max()))
+            if (!std::isfinite(number) || number < 1 || std::floor(number) != number || number > static_cast<double>(std::numeric_limits<int>::max()))
             {
                 lua_pop(state, 2);
                 context.fail("Luau array keys must be consecutive positive integers");
@@ -1439,10 +1274,7 @@ jobject convertTable(
         if (entryCount > VALUE_MAX_NODES)
         {
             lua_pop(state, 2);
-            context.fail(
-                "Luau value exceeds maximum node count " +
-                    std::to_string(VALUE_MAX_NODES),
-                true);
+            context.fail("Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES), true);
             return nullptr;
         }
         lua_pop(state, 1);
@@ -1453,35 +1285,23 @@ jobject convertTable(
         context.fail("Mixed Luau array and string table keys are not supported");
         return nullptr;
     }
-    if (knownArray == context.arrayLengths.end() &&
-        hasArrayKeys &&
-        largestArrayIndex != entryCount)
+    if (knownArray == context.arrayLengths.end() && hasArrayKeys && largestArrayIndex != entryCount)
     {
         context.fail("Sparse Luau arrays cannot cross the value boundary");
         return nullptr;
     }
     const bool isArray = hasArrayKeys || knownArray != context.arrayLengths.end();
-    const size_t arrayLength =
-        knownArray == context.arrayLengths.end()
-            ? entryCount
-            : std::max(knownArray->second, largestArrayIndex);
+    const size_t arrayLength = knownArray == context.arrayLengths.end() ? entryCount : std::max(knownArray->second, largestArrayIndex);
     if (arrayLength > VALUE_MAX_NODES)
     {
-        context.fail(
-            "Luau value exceeds maximum node count " +
-                std::to_string(VALUE_MAX_NODES),
-            true);
+        context.fail("Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES), true);
         return nullptr;
     }
 
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
         return nullptr;
-    jobjectArray elements =
-        env->NewObjectArray(
-            static_cast<jsize>(isArray ? arrayLength : entryCount),
-            symbols->nativeValue,
-            nullptr);
+    jobjectArray elements = env->NewObjectArray(static_cast<jsize>(isArray ? arrayLength : entryCount), symbols->nativeValue, nullptr);
     if (elements == nullptr)
         return nullptr;
 
@@ -1490,18 +1310,14 @@ jobject convertTable(
         for (size_t arrayIndex = 1; arrayIndex <= arrayLength; ++arrayIndex)
         {
             lua_rawgeti(state, tableIndex, static_cast<int>(arrayIndex));
-            jobject value =
-                convertValue(env, state, -1, context, depth + 1);
+            jobject value = convertValue(env, state, -1, context, depth + 1);
             lua_pop(state, 1);
             if (value == nullptr)
             {
                 env->DeleteLocalRef(elements);
                 return nullptr;
             }
-            env->SetObjectArrayElement(
-                elements,
-                static_cast<jsize>(arrayIndex - 1),
-                value);
+            env->SetObjectArrayElement(elements, static_cast<jsize>(arrayIndex - 1), value);
             env->DeleteLocalRef(value);
             if (env->ExceptionCheck())
             {
@@ -1509,14 +1325,12 @@ jobject convertTable(
                 return nullptr;
             }
         }
-        jobject result =
-            newNativeValue(env, VALUE_ARRAY, false, 0.0, std::nullopt, elements);
+        jobject result = newNativeValue(env, VALUE_ARRAY, false, 0.0, std::nullopt, elements);
         env->DeleteLocalRef(elements);
         return result;
     }
 
-    jobjectArray keysUtf8 =
-        env->NewObjectArray(static_cast<jsize>(entryCount), symbols->byteArray, nullptr);
+    jobjectArray keysUtf8 = env->NewObjectArray(static_cast<jsize>(entryCount), symbols->byteArray, nullptr);
     if (keysUtf8 == nullptr)
     {
         env->DeleteLocalRef(elements);
@@ -1547,8 +1361,7 @@ jobject convertTable(
         }
 
         jbyteArray keyBytes = newByteArray(env, keyView);
-        jobject value =
-            convertValue(env, state, -1, context, depth + 1);
+        jobject value = convertValue(env, state, -1, context, depth + 1);
         if (keyBytes == nullptr || value == nullptr)
         {
             lua_pop(state, 2);
@@ -1560,14 +1373,8 @@ jobject convertTable(
             env->DeleteLocalRef(elements);
             return nullptr;
         }
-        env->SetObjectArrayElement(
-            keysUtf8,
-            static_cast<jsize>(outputIndex),
-            keyBytes);
-        env->SetObjectArrayElement(
-            elements,
-            static_cast<jsize>(outputIndex),
-            value);
+        env->SetObjectArrayElement(keysUtf8, static_cast<jsize>(outputIndex), keyBytes);
+        env->SetObjectArrayElement(elements, static_cast<jsize>(outputIndex), value);
         env->DeleteLocalRef(keyBytes);
         env->DeleteLocalRef(value);
         if (env->ExceptionCheck())
@@ -1581,26 +1388,13 @@ jobject convertTable(
         lua_pop(state, 1);
     }
 
-    jobject result =
-        newNativeValue(
-            env,
-            VALUE_TABLE,
-            false,
-            0.0,
-            std::nullopt,
-            elements,
-            keysUtf8);
+    jobject result = newNativeValue(env, VALUE_TABLE, false, 0.0, std::nullopt, elements, keysUtf8);
     env->DeleteLocalRef(keysUtf8);
     env->DeleteLocalRef(elements);
     return result;
 }
 
-jobject convertValue(
-    JNIEnv* env,
-    lua_State* state,
-    int index,
-    ValueCodecContext& context,
-    size_t depth)
+jobject convertValue(JNIEnv* env, lua_State* state, int index, ValueCodecContext& context, size_t depth)
 {
     if (!context.visit(depth))
         return nullptr;
@@ -1626,12 +1420,7 @@ jobject convertValue(
         }
         if (!context.addStringBytes(length))
             return nullptr;
-        return newNativeValue(
-            env,
-            VALUE_STRING,
-            false,
-            0.0,
-            stringValue);
+        return newNativeValue(env, VALUE_STRING, false, 0.0, stringValue);
     }
     case LUA_TBUFFER:
     {
@@ -1639,29 +1428,17 @@ jobject convertValue(
         const auto* value = static_cast<const char*>(lua_tobuffer(state, index, &length));
         if (!context.addBufferBytes(length))
             return nullptr;
-        return newNativeValue(
-            env,
-            VALUE_BUFFER,
-            false,
-            0.0,
-            std::string_view(value == nullptr ? "" : value, length));
+        return newNativeValue(env, VALUE_BUFFER, false, 0.0, std::string_view(value == nullptr ? "" : value, length));
     }
     case LUA_TTABLE:
         return convertTable(env, state, index, context, depth);
     default:
-        context.fail(
-            std::string("Unsupported Luau return type: ") +
-            lua_typename(state, lua_type(state, index)));
+        context.fail(std::string("Unsupported Luau return type: ") + lua_typename(state, lua_type(state, index)));
         return nullptr;
     }
 }
 
-bool pushNativeValue(
-    JNIEnv* env,
-    lua_State* state,
-    jobject value,
-    ValueCodecContext& context,
-    size_t depth)
+bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value, ValueCodecContext& context, size_t depth)
 {
     if (!context.visit(depth))
         return false;
@@ -1719,8 +1496,7 @@ bool pushNativeValue(
     }
     case VALUE_ARRAY:
     {
-        auto elements =
-            static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
+        auto elements = static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
         if (env->ExceptionCheck() || elements == nullptr)
             return false;
         const jsize count = env->GetArrayLength(elements);
@@ -1730,8 +1506,7 @@ bool pushNativeValue(
         for (jsize index = 0; index < count; ++index)
         {
             jobject element = env->GetObjectArrayElement(elements, index);
-            if (element == nullptr ||
-                !pushNativeValue(env, state, element, context, depth + 1))
+            if (element == nullptr || !pushNativeValue(env, state, element, context, depth + 1))
             {
                 if (element != nullptr)
                     env->DeleteLocalRef(element);
@@ -1746,10 +1521,8 @@ bool pushNativeValue(
     }
     case VALUE_TABLE:
     {
-        auto elements =
-            static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
-        auto keysUtf8 =
-            static_cast<jobjectArray>(env->CallObjectMethod(value, keysMethod));
+        auto elements = static_cast<jobjectArray>(env->CallObjectMethod(value, elementsMethod));
+        auto keysUtf8 = static_cast<jobjectArray>(env->CallObjectMethod(value, keysMethod));
         if (env->ExceptionCheck() || elements == nullptr || keysUtf8 == nullptr)
         {
             if (elements != nullptr)
@@ -1771,8 +1544,7 @@ bool pushNativeValue(
         std::unordered_set<std::string> keys;
         for (jsize index = 0; index < count; ++index)
         {
-            auto keyBytes =
-                static_cast<jbyteArray>(env->GetObjectArrayElement(keysUtf8, index));
+            auto keyBytes = static_cast<jbyteArray>(env->GetObjectArrayElement(keysUtf8, index));
             jobject element = env->GetObjectArrayElement(elements, index);
             if (keyBytes == nullptr || element == nullptr)
             {
@@ -1786,8 +1558,7 @@ bool pushNativeValue(
             }
             const std::string key = getUtf8Bytes(env, keyBytes);
             env->DeleteLocalRef(keyBytes);
-            if (env->ExceptionCheck() || !isValidUtf8(key) ||
-                !context.addStringBytes(key.size()))
+            if (env->ExceptionCheck() || !isValidUtf8(key) || !context.addStringBytes(key.size()))
             {
                 if (!env->ExceptionCheck() && context.error.empty())
                     context.fail("Native table keys must contain valid UTF-8");
@@ -1824,11 +1595,7 @@ bool pushNativeValue(
     }
 }
 
-jobjectArray newNativeValueArray(
-    JNIEnv* env,
-    lua_State* state,
-    int resultCount,
-    ValueCodecContext& context)
+jobjectArray newNativeValueArray(JNIEnv* env, lua_State* state, int resultCount, ValueCodecContext& context)
 {
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
@@ -1866,10 +1633,7 @@ void reportAndClearJavaException(JNIEnv* env)
     }
 }
 
-bool pushHostModule(
-    lua_State* state,
-    NativeScriptInstance* instance,
-    std::string_view moduleName)
+bool pushHostModule(lua_State* state, NativeScriptInstance* instance, std::string_view moduleName)
 {
     JNIEnv* env = instance->environment();
     if (env == nullptr)
@@ -1877,15 +1641,10 @@ bool pushHostModule(
 
     const JniSymbols* symbols = jniSymbols(env);
     jmethodID exportsMethod = symbols == nullptr ? nullptr : symbols->hostRegistryExports;
-    jbyteArray moduleNameBytes =
-        exportsMethod == nullptr ? nullptr : newByteArray(env, moduleName);
+    jbyteArray moduleNameBytes = exportsMethod == nullptr ? nullptr : newByteArray(env, moduleName);
     jobjectArray exports = moduleNameBytes == nullptr
-        ? nullptr
-        : static_cast<jobjectArray>(
-            env->CallObjectMethod(
-                instance->hostRegistry,
-                exportsMethod,
-                moduleNameBytes));
+                               ? nullptr
+                               : static_cast<jobjectArray>(env->CallObjectMethod(instance->hostRegistry, exportsMethod, moduleNameBytes));
     if (moduleNameBytes != nullptr)
         env->DeleteLocalRef(moduleNameBytes);
     if (env->ExceptionCheck())
@@ -1901,8 +1660,7 @@ bool pushHostModule(
     const int tableIndex = lua_absindex(state, -1);
     for (jsize index = 0; index < exportCount; ++index)
     {
-        auto exportNameBytes =
-            static_cast<jbyteArray>(env->GetObjectArrayElement(exports, index));
+        auto exportNameBytes = static_cast<jbyteArray>(env->GetObjectArrayElement(exports, index));
         if (env->ExceptionCheck() || exportNameBytes == nullptr)
         {
             if (exportNameBytes != nullptr)
@@ -1913,10 +1671,7 @@ bool pushHostModule(
         }
         const std::string exportName = getUtf8Bytes(env, exportNameBytes);
         env->DeleteLocalRef(exportNameBytes);
-        if (env->ExceptionCheck() ||
-            exportName.empty() ||
-            exportName.size() > 256 ||
-            !isValidUtf8(exportName) ||
+        if (env->ExceptionCheck() || exportName.empty() || exportName.size() > 256 || !isValidUtf8(exportName) ||
             exportName.find('\0') != std::string::npos)
         {
             env->DeleteLocalRef(exports);
@@ -1926,11 +1681,7 @@ bool pushHostModule(
 
         lua_pushlstring(state, moduleName.data(), moduleName.size());
         lua_pushlstring(state, exportName.data(), exportName.size());
-        lua_pushcclosure(
-            state,
-            invokeHostFunction,
-            "host",
-            2);
+        lua_pushcclosure(state, invokeHostFunction, "host", 2);
         lua_setfield(state, tableIndex, exportName.c_str());
     }
     env->DeleteLocalRef(exports);
@@ -1940,8 +1691,7 @@ bool pushHostModule(
 
 int invokeHostFunction(lua_State* state)
 {
-    auto* instance =
-        static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
     if (instance == nullptr)
         luaL_error(state, "%s", "Luau host call context is unavailable");
     JNIEnv* env = instance->environment();
@@ -1958,24 +1708,13 @@ int invokeHostFunction(lua_State* state)
 
     size_t moduleNameLength = 0;
     size_t exportNameLength = 0;
-    const char* moduleName =
-        lua_tolstring(state, lua_upvalueindex(1), &moduleNameLength);
-    const char* exportName =
-        lua_tolstring(state, lua_upvalueindex(2), &exportNameLength);
-    const std::string_view moduleNameView(
-        moduleName == nullptr ? "" : moduleName,
-        moduleNameLength);
-    const std::string_view exportNameView(
-        exportName == nullptr ? "" : exportName,
-        exportNameLength);
+    const char* moduleName = lua_tolstring(state, lua_upvalueindex(1), &moduleNameLength);
+    const char* exportName = lua_tolstring(state, lua_upvalueindex(2), &exportNameLength);
+    const std::string_view moduleNameView(moduleName == nullptr ? "" : moduleName, moduleNameLength);
+    const std::string_view exportNameView(exportName == nullptr ? "" : exportName, exportNameLength);
 
     ValueCodecContext argumentContext;
-    jobjectArray arguments =
-        newNativeValueArray(
-            env,
-            state,
-            lua_gettop(state),
-            argumentContext);
+    jobjectArray arguments = newNativeValueArray(env, state, lua_gettop(state), argumentContext);
     if (arguments == nullptr)
     {
         if (env->ExceptionCheck())
@@ -1983,32 +1722,18 @@ int invokeHostFunction(lua_State* state)
             reportAndClearJavaException(env);
             luaL_error(state, "%s", "Host argument conversion failed internally");
         }
-        execution.exceededLimit =
-            argumentContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
-        luaL_error(
-            state,
-            "%s",
-            argumentContext.error.empty()
-                ? "Failed to encode host function arguments"
-                : argumentContext.error.c_str());
+        execution.exceededLimit = argumentContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+        luaL_error(state, "%s", argumentContext.error.empty() ? "Failed to encode host function arguments" : argumentContext.error.c_str());
     }
 
     const JniSymbols* symbols = jniSymbols(env);
     jmethodID invokeMethod = symbols == nullptr ? nullptr : symbols->hostRegistryInvoke;
-    jbyteArray moduleNameBytes =
-        invokeMethod == nullptr ? nullptr : newByteArray(env, moduleNameView);
-    jbyteArray exportNameBytes =
-        moduleNameBytes == nullptr ? nullptr : newByteArray(env, exportNameView);
+    jbyteArray moduleNameBytes = invokeMethod == nullptr ? nullptr : newByteArray(env, moduleNameView);
+    jbyteArray exportNameBytes = moduleNameBytes == nullptr ? nullptr : newByteArray(env, exportNameView);
     jobject callResult =
         exportNameBytes == nullptr
             ? nullptr
-            : env->CallObjectMethod(
-                instance->hostRegistry,
-                invokeMethod,
-                moduleNameBytes,
-                exportNameBytes,
-                arguments,
-                instance->currentHostContext);
+            : env->CallObjectMethod(instance->hostRegistry, invokeMethod, moduleNameBytes, exportNameBytes, arguments, instance->currentHostContext);
     if (exportNameBytes != nullptr)
         env->DeleteLocalRef(exportNameBytes);
     if (moduleNameBytes != nullptr)
@@ -2026,10 +1751,7 @@ int invokeHostFunction(lua_State* state)
     jmethodID valuesMethod = symbols == nullptr ? nullptr : symbols->hostCallResultValues;
     jmethodID messageMethod = symbols == nullptr ? nullptr : symbols->hostCallResultMessage;
     jmethodID outputMethod = symbols == nullptr ? nullptr : symbols->hostCallResultOutput;
-    if (statusMethod == nullptr ||
-        valuesMethod == nullptr ||
-        messageMethod == nullptr ||
-        outputMethod == nullptr)
+    if (statusMethod == nullptr || valuesMethod == nullptr || messageMethod == nullptr || outputMethod == nullptr)
     {
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
@@ -2050,16 +1772,14 @@ int invokeHostFunction(lua_State* state)
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
     }
-    auto messageBytes =
-        static_cast<jbyteArray>(env->CallObjectMethod(callResult, messageMethod));
+    auto messageBytes = static_cast<jbyteArray>(env->CallObjectMethod(callResult, messageMethod));
     if (env->ExceptionCheck())
     {
         env->DeleteLocalRef(callResult);
         reportAndClearJavaException(env);
         luaL_error(state, "%s", "Host function returned an invalid boundary result");
     }
-    auto values =
-        static_cast<jobjectArray>(env->CallObjectMethod(callResult, valuesMethod));
+    auto values = static_cast<jobjectArray>(env->CallObjectMethod(callResult, valuesMethod));
     if (env->ExceptionCheck() || values == nullptr)
     {
         if (messageBytes != nullptr)
@@ -2070,18 +1790,14 @@ int invokeHostFunction(lua_State* state)
     }
 
     const uint64_t output = static_cast<uint64_t>(outputBytes);
-    if (output >
-        execution.maxHostOutputBytes -
-            std::min(execution.hostOutputBytes, execution.maxHostOutputBytes))
+    if (output > execution.maxHostOutputBytes - std::min(execution.hostOutputBytes, execution.maxHostOutputBytes))
     {
         env->DeleteLocalRef(values);
         if (messageBytes != nullptr)
             env->DeleteLocalRef(messageBytes);
         env->DeleteLocalRef(callResult);
-        execution.hostOutputBytes =
-            output > std::numeric_limits<uint64_t>::max() - execution.hostOutputBytes
-                ? std::numeric_limits<uint64_t>::max()
-                : execution.hostOutputBytes + output;
+        execution.hostOutputBytes = output > std::numeric_limits<uint64_t>::max() - execution.hostOutputBytes ? std::numeric_limits<uint64_t>::max()
+                                                                                                              : execution.hostOutputBytes + output;
         execution.exceededLimit = EXECUTION_HOST_OUTPUT_LIMIT;
         luaL_error(state, "%s", "Luau execution exceeded its host-output budget");
     }
@@ -2089,10 +1805,7 @@ int invokeHostFunction(lua_State* state)
 
     if (status != 0)
     {
-        const std::string message =
-            messageBytes == nullptr
-                ? "Host function failed"
-                : getUtf8Bytes(env, messageBytes);
+        const std::string message = messageBytes == nullptr ? "Host function failed" : getUtf8Bytes(env, messageBytes);
         env->DeleteLocalRef(values);
         if (messageBytes != nullptr)
             env->DeleteLocalRef(messageBytes);
@@ -2114,13 +1827,7 @@ int invokeHostFunction(lua_State* state)
     for (jsize index = 0; index < resultCount; ++index)
     {
         jobject value = env->GetObjectArrayElement(values, index);
-        if (value == nullptr ||
-            !pushNativeValue(
-                env,
-                state,
-                value,
-                resultContext,
-                0))
+        if (value == nullptr || !pushNativeValue(env, state, value, resultContext, 0))
         {
             if (value != nullptr)
                 env->DeleteLocalRef(value);
@@ -2131,14 +1838,8 @@ int invokeHostFunction(lua_State* state)
                 reportAndClearJavaException(env);
                 luaL_error(state, "%s", "Host return conversion failed internally");
             }
-            execution.exceededLimit =
-                resultContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
-            luaL_error(
-                state,
-                "%s",
-                resultContext.error.empty()
-                    ? "Failed to decode host function return values"
-                    : resultContext.error.c_str());
+            execution.exceededLimit = resultContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+            luaL_error(state, "%s", resultContext.error.empty() ? "Failed to decode host function return values" : resultContext.error.c_str());
         }
         env->DeleteLocalRef(value);
     }
@@ -2147,9 +1848,7 @@ int invokeHostFunction(lua_State* state)
     return resultCount;
 }
 
-jobject newNativeStackFrame(
-    JNIEnv* env,
-    const DebugStackFrame& frame)
+jobject newNativeStackFrame(JNIEnv* env, const DebugStackFrame& frame)
 {
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
@@ -2165,29 +1864,18 @@ jobject newNativeStackFrame(
             env->DeleteLocalRef(functionName);
         return nullptr;
     }
-    jobject result = env->NewObject(
-        symbols->stackFrame,
-        symbols->stackFrameConstructor,
-        moduleName,
-        functionName,
-        static_cast<jint>(frame.line));
+    jobject result = env->NewObject(symbols->stackFrame, symbols->stackFrameConstructor, moduleName, functionName, static_cast<jint>(frame.line));
     env->DeleteLocalRef(moduleName);
     env->DeleteLocalRef(functionName);
     return result;
 }
 
-jobject newNativePauseInfo(
-    JNIEnv* env,
-    const PauseSnapshot& pause)
+jobject newNativePauseInfo(JNIEnv* env, const PauseSnapshot& pause)
 {
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
         return nullptr;
-    jobjectArray frames =
-        env->NewObjectArray(
-            static_cast<jsize>(pause.stackFrames.size()),
-            symbols->stackFrame,
-            nullptr);
+    jobjectArray frames = env->NewObjectArray(static_cast<jsize>(pause.stackFrames.size()), symbols->stackFrame, nullptr);
     if (frames == nullptr)
         return nullptr;
 
@@ -2199,10 +1887,7 @@ jobject newNativePauseInfo(
             env->DeleteLocalRef(frames);
             return nullptr;
         }
-        env->SetObjectArrayElement(
-            frames,
-            static_cast<jsize>(index),
-            frame);
+        env->SetObjectArrayElement(frames, static_cast<jsize>(index), frame);
         env->DeleteLocalRef(frame);
         if (env->ExceptionCheck())
         {
@@ -2219,12 +1904,8 @@ jobject newNativePauseInfo(
     }
 
     jobject result = env->NewObject(
-        symbols->pauseInfo,
-        symbols->pauseInfoConstructor,
-        static_cast<jint>(pause.reason),
-        moduleName,
-        static_cast<jint>(pause.line),
-        frames);
+        symbols->pauseInfo, symbols->pauseInfoConstructor, static_cast<jint>(pause.reason), moduleName, static_cast<jint>(pause.line), frames
+    );
     env->DeleteLocalRef(moduleName);
     env->DeleteLocalRef(frames);
     return result;
@@ -2237,7 +1918,8 @@ jobject newNativeExecutionResult(
     std::string_view message,
     uint64_t elapsedNanos,
     const ExecutionContext& context,
-    const PauseSnapshot* pause = nullptr)
+    const PauseSnapshot* pause = nullptr
+)
 {
     const JniSymbols* symbols = jniSymbols(env);
     if (symbols == nullptr)
@@ -2266,7 +1948,8 @@ jobject newNativeExecutionResult(
         static_cast<jlong>(context.peakMemory),
         static_cast<jlong>(context.hostCalls),
         static_cast<jlong>(context.hostOutputBytes),
-        pauseInfo);
+        pauseInfo
+    );
     if (messageBytes != nullptr)
         env->DeleteLocalRef(messageBytes);
     if (pauseInfo != nullptr)
@@ -2279,7 +1962,8 @@ void prepareExecution(
     uint64_t maxRuntimeNanos,
     uint64_t maxInterruptChecks,
     uint64_t maxHostCalls,
-    uint64_t maxHostOutputBytes)
+    uint64_t maxHostOutputBytes
+)
 {
     context.interruptChecks = 0;
     context.maxInterruptChecks = maxInterruptChecks;
@@ -2297,35 +1981,21 @@ void startExecutionSegment(lua_State* thread, ExecutionContext& context)
 {
     lua_callbacks(thread)->interrupt = executionInterrupt;
     context.startedAt = std::chrono::steady_clock::now();
-    const uint64_t remaining =
-        context.elapsedNanos >= context.maxRuntimeNanos
-            ? 0
-            : context.maxRuntimeNanos - context.elapsedNanos;
-    context.deadline =
-        context.startedAt +
-        std::chrono::nanoseconds(static_cast<int64_t>(remaining));
+    const uint64_t remaining = context.elapsedNanos >= context.maxRuntimeNanos ? 0 : context.maxRuntimeNanos - context.elapsedNanos;
+    context.deadline = context.startedAt + std::chrono::nanoseconds(static_cast<int64_t>(remaining));
 }
 
 void finishExecutionSegment(ExecutionContext& context)
 {
     const auto finishedAt = std::chrono::steady_clock::now();
-    const uint64_t segmentNanos = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            finishedAt - context.startedAt)
-            .count());
-    context.elapsedNanos =
-        segmentNanos > std::numeric_limits<uint64_t>::max() - context.elapsedNanos
-            ? std::numeric_limits<uint64_t>::max()
-            : context.elapsedNanos + segmentNanos;
-    if (context.elapsedNanos >= context.maxRuntimeNanos &&
-        context.exceededLimit == EXECUTION_COMPLETED)
+    const uint64_t segmentNanos = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(finishedAt - context.startedAt).count());
+    context.elapsedNanos = segmentNanos > std::numeric_limits<uint64_t>::max() - context.elapsedNanos ? std::numeric_limits<uint64_t>::max()
+                                                                                                      : context.elapsedNanos + segmentNanos;
+    if (context.elapsedNanos >= context.maxRuntimeNanos && context.exceededLimit == EXECUTION_COMPLETED)
         context.exceededLimit = EXECUTION_RUNTIME_LIMIT;
 }
 
-std::string executionFailureMessage(
-    lua_State* thread,
-    int status,
-    int executionStatus)
+std::string executionFailureMessage(lua_State* thread, int status, int executionStatus)
 {
     if (status == EXECUTION_RUNTIME_LIMIT)
         return "Luau execution exceeded its maximum runtime";
@@ -2346,16 +2016,11 @@ std::string executionFailureMessage(
     return luaError(thread);
 }
 
-jobject finishExecution(
-    JNIEnv* env,
-    NativeScriptInstance& instance,
-    int executionStatus,
-    bool captureExports)
+jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executionStatus, bool captureExports)
 {
     ExecutionContext& context = instance.context;
     lua_State* thread = instance.thread;
-    if (executionStatus == LUA_BREAK &&
-        context.exceededLimit == EXECUTION_COMPLETED)
+    if (executionStatus == LUA_BREAK && context.exceededLimit == EXECUTION_COMPLETED)
     {
         context.lastStatus = EXECUTION_PAUSED;
         if (!instance.pauseSnapshot.has_value())
@@ -2367,21 +2032,10 @@ jobject finishExecution(
             lua_singlestep(thread, false);
             clearSingleStep(instance);
             return newNativeExecutionResult(
-                env,
-                EXECUTION_RUNTIME_FAILED,
-                nullptr,
-                "Luau paused without debugger state",
-                context.elapsedNanos,
-                context);
+                env, EXECUTION_RUNTIME_FAILED, nullptr, "Luau paused without debugger state", context.elapsedNanos, context
+            );
         }
-        return newNativeExecutionResult(
-            env,
-            EXECUTION_PAUSED,
-            nullptr,
-            {},
-            context.elapsedNanos,
-            context,
-            &*instance.pauseSnapshot);
+        return newNativeExecutionResult(env, EXECUTION_PAUSED, nullptr, {}, context.elapsedNanos, context, &*instance.pauseSnapshot);
     }
 
     instance.paused = false;
@@ -2389,8 +2043,7 @@ jobject finishExecution(
     instance.pausedThreads.clear();
     lua_singlestep(thread, false);
     clearSingleStep(instance);
-    if (executionStatus != LUA_OK ||
-        context.exceededLimit != EXECUTION_COMPLETED)
+    if (executionStatus != LUA_OK || context.exceededLimit != EXECUTION_COMPLETED)
     {
         int status = EXECUTION_RUNTIME_FAILED;
         if (context.exceededLimit != EXECUTION_COMPLETED)
@@ -2400,12 +2053,8 @@ jobject finishExecution(
         context.lastStatus = status;
         instance.activeArrayLengths.clear();
         return newNativeExecutionResult(
-            env,
-            status,
-            nullptr,
-            executionFailureMessage(thread, status, executionStatus),
-            context.elapsedNanos,
-            context);
+            env, status, nullptr, executionFailureMessage(thread, status, executionStatus), context.elapsedNanos, context
+        );
     }
 
     if (captureExports)
@@ -2415,12 +2064,8 @@ jobject finishExecution(
             context.lastStatus = EXECUTION_RUNTIME_FAILED;
             instance.activeArrayLengths.clear();
             return newNativeExecutionResult(
-                env,
-                EXECUTION_RUNTIME_FAILED,
-                nullptr,
-                "Root module must return exactly one export table",
-                context.elapsedNanos,
-                context);
+                env, EXECUTION_RUNTIME_FAILED, nullptr, "Root module must return exactly one export table", context.elapsedNanos, context
+            );
         }
         lua_setreadonly(thread, 1, true);
         instance.exportsRef = lua_ref(thread, 1);
@@ -2428,12 +2073,7 @@ jobject finishExecution(
 
     ValueCodecContext valueContext;
     valueContext.arrayLengths = instance.activeArrayLengths;
-    jobjectArray values =
-        newNativeValueArray(
-            env,
-            thread,
-            captureExports ? 0 : lua_gettop(thread),
-            valueContext);
+    jobjectArray values = newNativeValueArray(env, thread, captureExports ? 0 : lua_gettop(thread), valueContext);
     if (values == nullptr)
     {
         if (env->ExceptionCheck())
@@ -2441,8 +2081,7 @@ jobject finishExecution(
             instance.activeArrayLengths.clear();
             return nullptr;
         }
-        context.lastStatus =
-            valueContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
+        context.lastStatus = valueContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
         instance.activeArrayLengths.clear();
         return newNativeExecutionResult(
             env,
@@ -2450,7 +2089,8 @@ jobject finishExecution(
             nullptr,
             valueContext.error.empty() ? "Failed to encode Luau return values" : valueContext.error,
             context.elapsedNanos,
-            context);
+            context
+        );
     }
     if (env->ExceptionCheck())
     {
@@ -2459,21 +2099,14 @@ jobject finishExecution(
     }
     context.lastStatus = EXECUTION_COMPLETED;
     instance.activeArrayLengths.clear();
-    jobject result = newNativeExecutionResult(
-        env,
-        EXECUTION_COMPLETED,
-        values,
-        {},
-        context.elapsedNanos,
-        context);
+    jobject result = newNativeExecutionResult(env, EXECUTION_COMPLETED, values, {}, context.elapsedNanos, context);
     env->DeleteLocalRef(values);
     return result;
 }
 
 int resumePausedThreadChain(NativeScriptInstance& instance)
 {
-    const std::vector<lua_State*> suspendedThreads =
-        std::move(instance.pausedThreads);
+    const std::vector<lua_State*> suspendedThreads = std::move(instance.pausedThreads);
     instance.pausedThreads.clear();
 
     int executionStatus = LUA_BREAK;
@@ -2481,9 +2114,7 @@ int resumePausedThreadChain(NativeScriptInstance& instance)
     {
         lua_State* state = suspendedThreads[index];
         size_t dormantDepth = 0;
-        for (size_t parentIndex = index + 1;
-             parentIndex < suspendedThreads.size();
-             ++parentIndex)
+        for (size_t parentIndex = index + 1; parentIndex < suspendedThreads.size(); ++parentIndex)
             dormantDepth += debugStackDepth(suspendedThreads[parentIndex]);
         instance.stepActiveThread = state;
         instance.stepDormantDepth = dormantDepth;
@@ -2493,9 +2124,7 @@ int resumePausedThreadChain(NativeScriptInstance& instance)
             continue;
 
         lua_State* child = state;
-        for (size_t parentIndex = index + 1;
-             parentIndex < suspendedThreads.size();
-             ++parentIndex)
+        for (size_t parentIndex = index + 1; parentIndex < suspendedThreads.size(); ++parentIndex)
         {
             lua_State* parent = suspendedThreads[parentIndex];
             appendPausedParent(instance, child, parent);
@@ -2506,10 +2135,7 @@ int resumePausedThreadChain(NativeScriptInstance& instance)
     return executionStatus;
 }
 
-jobject terminatePausedExecution(
-    JNIEnv* env,
-    NativeScriptInstance& instance,
-    std::string_view message)
+jobject terminatePausedExecution(JNIEnv* env, NativeScriptInstance& instance, std::string_view message)
 {
     lua_resetthread(instance.thread);
     instance.loadingModules.clear();
@@ -2525,13 +2151,7 @@ jobject terminatePausedExecution(
     instance.context.pauseRequested.store(false);
     instance.context.terminateRequested.store(false);
     instance.context.lastStatus = EXECUTION_TERMINATED;
-    return newNativeExecutionResult(
-        env,
-        EXECUTION_TERMINATED,
-        nullptr,
-        message,
-        instance.context.elapsedNanos,
-        instance.context);
+    return newNativeExecutionResult(env, EXECUTION_TERMINATED, nullptr, message, instance.context.elapsedNanos, instance.context);
 }
 
 jobject executeChunk(
@@ -2543,30 +2163,18 @@ jobject executeChunk(
     uint64_t maxInterruptChecks,
     uint64_t maxHostCalls,
     uint64_t maxHostOutputBytes,
-    bool captureExports = false)
+    bool captureExports = false
+)
 {
     ExecutionContext& context = instance.context;
     lua_State* thread = instance.thread;
-    prepareExecution(
-        context,
-        maxRuntimeNanos,
-        maxInterruptChecks,
-        maxHostCalls,
-        maxHostOutputBytes);
+    prepareExecution(context, maxRuntimeNanos, maxInterruptChecks, maxHostCalls, maxHostOutputBytes);
 
-    const int loadStatus =
-        luau_load(thread, chunk.c_str(), bytecode.data(), bytecode.size(), 0);
+    const int loadStatus = luau_load(thread, chunk.c_str(), bytecode.data(), bytecode.size(), 0);
     if (loadStatus != LUA_OK)
     {
-        context.lastStatus =
-            loadStatus == LUA_ERRMEM ? EXECUTION_MEMORY_LIMIT : EXECUTION_RUNTIME_FAILED;
-        return newNativeExecutionResult(
-            env,
-            context.lastStatus,
-            nullptr,
-            luaError(thread),
-            context.elapsedNanos,
-            context);
+        context.lastStatus = loadStatus == LUA_ERRMEM ? EXECUTION_MEMORY_LIMIT : EXECUTION_RUNTIME_FAILED;
+        return newNativeExecutionResult(env, context.lastStatus, nullptr, luaError(thread), context.elapsedNanos, context);
     }
     rememberModuleClosure(instance, thread, chunk, -1);
 
@@ -2580,1155 +2188,928 @@ jobject executeChunk(
 
 extern "C"
 {
-JNIEXPORT jint JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_abiVersion(JNIEnv*, jclass)
-{
-    return LUAU_JNI_ABI_VERSION;
-}
-
-JNIEXPORT jstring JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauVersion(JNIEnv* env, jclass)
-{
-    return env->NewStringUTF(LUAU_UPSTREAM_VERSION);
-}
-
-JNIEXPORT jstring JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauCommit(JNIEnv* env, jclass)
-{
-    return env->NewStringUTF(LUAU_UPSTREAM_COMMIT);
-}
-
-JNIEXPORT jstring JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_runtimeVersion(JNIEnv* env, jclass)
-{
-    return env->NewStringUTF(LUAU_RUNTIME_VERSION);
-}
-
-jbyteArray compileImpl(
-    JNIEnv* env,
-    jclass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray sourceUtf8)
-{
-    using namespace suterxom::luau;
-
-    const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
-    const std::string source = getUtf8Bytes(env, sourceUtf8);
-    if (env->ExceptionCheck())
-        return nullptr;
-
-    lua_CompileOptions options{};
-    options.optimizationLevel = 1;
-    options.debugLevel = 2;
-    options.typeInfoLevel = 0;
-    options.coverageLevel = 0;
-
-    size_t bytecodeSize = 0;
-    BytecodePtr bytecode(
-        luau_compile(source.data(), source.size(), &options, &bytecodeSize),
-        &std::free);
-    if (bytecode == nullptr)
+    JNIEXPORT jint JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_abiVersion(JNIEnv*, jclass)
     {
-        throwNativeException(env, "Luau compiler returned no bytecode");
-        return nullptr;
+        return LUAU_JNI_ABI_VERSION;
     }
 
-    LuaStatePtr validationState(luaL_newstate());
-    if (validationState == nullptr)
+    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauVersion(JNIEnv* env, jclass)
     {
-        throwNativeException(env, "Failed to create a Luau validation state");
-        return nullptr;
+        return env->NewStringUTF(LUAU_UPSTREAM_VERSION);
     }
 
-    const int loadStatus =
-        luau_load(validationState.get(), chunk.c_str(), bytecode.get(), bytecodeSize, 0);
-    if (loadStatus != LUA_OK)
+    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauCommit(JNIEnv* env, jclass)
     {
-        throwNativeException(env, luaError(validationState.get()));
-        return nullptr;
+        return env->NewStringUTF(LUAU_UPSTREAM_COMMIT);
     }
 
-    jbyteArray result = env->NewByteArray(static_cast<jsize>(bytecodeSize));
-    if (result == nullptr)
-        return nullptr;
-    env->SetByteArrayRegion(
-        result,
-        0,
-        static_cast<jsize>(bytecodeSize),
-        reinterpret_cast<const jbyte*>(bytecode.get()));
-    return result;
-}
-
-jobjectArray typecheckImpl(
-    JNIEnv* env,
-    jclass,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray sourcesUtf8)
-{
-    using namespace suterxom::luau;
-
-    const std::string rootModuleName =
-        getUtf8Bytes(env, rootModuleNameUtf8);
-    std::unordered_map<std::string, std::string> sources;
-    std::vector<std::string> orderedNames;
-    if (env->ExceptionCheck() ||
-        !readNamedByteArrays(
-            env,
-            moduleNamesUtf8,
-            sourcesUtf8,
-            sources,
-            orderedNames))
-        return nullptr;
-    if (sources.find(rootModuleName) == sources.end())
+    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_runtimeVersion(JNIEnv* env, jclass)
     {
-        throwNativeException(env, "Root module is not present in native source set");
-        return nullptr;
+        return env->NewStringUTF(LUAU_RUNTIME_VERSION);
     }
 
-    InMemorySourceResolver fileResolver(std::move(sources));
-    StrictConfigResolver configResolver;
-    Luau::FrontendOptions options;
-    options.retainFullTypeGraphs = false;
-    options.runLintChecks = false;
-    options.moduleTimeLimitSec = 2.0;
-    options.applyInternalLimitScaling = true;
-
-    Luau::Frontend frontend(&fileResolver, &configResolver, options);
-    Luau::registerBuiltinGlobals(frontend, frontend.globals);
-    Luau::freeze(frontend.globals.globalTypes);
-
-    struct Diagnostic
+    jbyteArray compileImpl(JNIEnv* env, jclass, jbyteArray chunkNameUtf8, jbyteArray sourceUtf8)
     {
-        int stage;
-        std::string moduleName;
-        std::string message;
-        int startLine = 0;
-        int startColumn = 0;
-        int endLine = 0;
-        int endColumn = 0;
-    };
-    std::vector<Diagnostic> diagnostics;
-    std::unordered_set<std::string> seenDiagnostics;
-    std::vector<std::string> namesToCheck;
-    namesToCheck.reserve(orderedNames.size());
-    namesToCheck.push_back(rootModuleName);
-    for (const std::string& moduleName : orderedNames)
-    {
-        if (moduleName != rootModuleName)
-            namesToCheck.push_back(moduleName);
-    }
+        using namespace suterxom::luau;
 
-    for (const std::string& checkedName : namesToCheck)
-    {
-        Luau::CheckResult checkResult = frontend.check(checkedName);
-        for (const Luau::TypeError& error : checkResult.errors)
-        {
-            const Luau::Location& location = error.location;
-            const int stage =
-                Luau::get<Luau::SyntaxError>(error) == nullptr ? 1 : 0;
-            const std::string moduleName =
-                error.moduleName.empty() ? checkedName : error.moduleName;
-            const std::string message = Luau::toString(
-                error,
-                Luau::TypeErrorToStringOptions{&fileResolver});
-            // Luau locations are zero-based; zero means unknown in the Java API.
-            const int startLine =
-                static_cast<int>(location.begin.line + 1);
-            const int startColumn =
-                static_cast<int>(location.begin.column + 1);
-            const int endLine = static_cast<int>(location.end.line + 1);
-            const int endColumn =
-                static_cast<int>(location.end.column + 1);
-            const std::string key =
-                std::to_string(stage) + "\n" + moduleName + "\n" +
-                std::to_string(startLine) + ":" +
-                std::to_string(startColumn) + "-" +
-                std::to_string(endLine) + ":" +
-                std::to_string(endColumn) + "\n" + message;
-            if (seenDiagnostics.insert(key).second)
-                diagnostics.push_back(
-                    {stage,
-                     moduleName,
-                     message,
-                     startLine,
-                     startColumn,
-                     endLine,
-                     endColumn});
-        }
-        for (const Luau::ModuleName& timedOutModule : checkResult.timeoutHits)
-        {
-            const std::string message =
-                "Type checking timed out for module " + timedOutModule;
-            const std::string key = "1\n" + timedOutModule + "\n" + message;
-            if (seenDiagnostics.insert(key).second)
-                diagnostics.push_back({1, timedOutModule, message});
-        }
-    }
-
-    const JniSymbols* symbols = jniSymbols(env);
-    if (symbols == nullptr)
-        return nullptr;
-    jobjectArray result =
-        env->NewObjectArray(
-            static_cast<jsize>(diagnostics.size()),
-            symbols->compilationDiagnostic,
-            nullptr);
-    if (result == nullptr)
-        return nullptr;
-
-    for (size_t index = 0; index < diagnostics.size(); ++index)
-    {
-        jbyteArray moduleName =
-            newByteArray(env, diagnostics[index].moduleName);
-        jbyteArray message =
-            newByteArray(env, diagnostics[index].message);
-        if (moduleName == nullptr || message == nullptr)
-        {
-            if (moduleName != nullptr)
-                env->DeleteLocalRef(moduleName);
-            if (message != nullptr)
-                env->DeleteLocalRef(message);
-            env->DeleteLocalRef(result);
-            return nullptr;
-        }
-        jobject diagnostic = env->NewObject(
-            symbols->compilationDiagnostic,
-            symbols->compilationDiagnosticConstructor,
-            static_cast<jint>(diagnostics[index].stage),
-            moduleName,
-            message,
-            static_cast<jint>(diagnostics[index].startLine),
-            static_cast<jint>(diagnostics[index].startColumn),
-            static_cast<jint>(diagnostics[index].endLine),
-            static_cast<jint>(diagnostics[index].endColumn));
-        env->DeleteLocalRef(moduleName);
-        env->DeleteLocalRef(message);
-        if (diagnostic == nullptr)
-        {
-            env->DeleteLocalRef(result);
-            return nullptr;
-        }
-        env->SetObjectArrayElement(
-            result,
-            static_cast<jsize>(index),
-            diagnostic);
-        env->DeleteLocalRef(diagnostic);
+        const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
+        const std::string source = getUtf8Bytes(env, sourceUtf8);
         if (env->ExceptionCheck())
+            return nullptr;
+
+        lua_CompileOptions options{};
+        options.optimizationLevel = 1;
+        options.debugLevel = 2;
+        options.typeInfoLevel = 0;
+        options.coverageLevel = 0;
+
+        size_t bytecodeSize = 0;
+        BytecodePtr bytecode(luau_compile(source.data(), source.size(), &options, &bytecodeSize), &std::free);
+        if (bytecode == nullptr)
         {
-            env->DeleteLocalRef(result);
+            throwNativeException(env, "Luau compiler returned no bytecode");
             return nullptr;
         }
-    }
-    return result;
-}
 
-jobject executeImpl(
-    JNIEnv* env,
-    jclass,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray bytecodeArrays,
-    jobject hostRegistry,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes,
-    jlong maxMemoryBytes)
-{
-    using namespace suterxom::luau;
-
-    const std::string rootModuleName =
-        getUtf8Bytes(env, rootModuleNameUtf8);
-    std::unordered_map<std::string, std::string> moduleBytecodes;
-    std::vector<std::string> orderedNames;
-    if (env->ExceptionCheck() ||
-        !readNamedByteArrays(
-            env,
-            moduleNamesUtf8,
-            bytecodeArrays,
-            moduleBytecodes,
-            orderedNames))
-        return nullptr;
-    if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
-    {
-        throwNativeException(env, "Root module is not present in native bytecode set");
-        return nullptr;
-    }
-    if (hostRegistry == nullptr || hostContext == nullptr)
-    {
-        throwNativeException(env, "Native host registry and call context must not be null");
-        return nullptr;
-    }
-    if (maxRuntimeNanos <= 0 ||
-        maxInterruptChecks <= 0 ||
-        maxHostCalls < 0 ||
-        maxHostOutputBytes < 0 ||
-        maxMemoryBytes <= 0)
-    {
-        throwNativeException(env, "Native execution limits are invalid");
-        return nullptr;
-    }
-
-    auto instance = std::make_unique<NativeScriptInstance>(
-        env,
-        rootModuleName,
-        std::move(moduleBytecodes),
-        hostRegistry,
-        static_cast<size_t>(maxMemoryBytes));
-    if (env->ExceptionCheck())
-        return nullptr;
-    if (!instance->valid())
-    {
-        instance->context.exceededLimit = EXECUTION_MEMORY_LIMIT;
-        return newNativeExecutionResult(
-            env,
-            EXECUTION_MEMORY_LIMIT,
-            nullptr,
-            "Failed to create a Luau VM for the compiled program",
-            0,
-            instance->context);
-    }
-
-    const auto rootBytecode =
-        instance->moduleBytecodes.find(instance->rootModuleName);
-    instance->loadingModules.insert(instance->rootModuleName);
-    instance->activeOperation = ActiveOperation::Execute;
-    instance->currentHostContext = hostContext;
-    jobject result = executeChunk(
-        env,
-        *instance,
-        instance->rootModuleName,
-        rootBytecode->second,
-        static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks),
-        static_cast<uint64_t>(maxHostCalls),
-        static_cast<uint64_t>(maxHostOutputBytes));
-    instance->currentHostContext = nullptr;
-    instance->loadingModules.erase(instance->rootModuleName);
-    instance->activeOperation = ActiveOperation::None;
-    return result;
-}
-
-jlong createInstanceImpl(
-    JNIEnv* env,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray bytecodeArrays,
-    jobject hostRegistry,
-    jlong maxMemoryBytes)
-{
-    using namespace suterxom::luau;
-
-    const std::string rootModuleName =
-        getUtf8Bytes(env, rootModuleNameUtf8);
-    std::unordered_map<std::string, std::string> moduleBytecodes;
-    std::vector<std::string> orderedNames;
-    if (env->ExceptionCheck() ||
-        !readNamedByteArrays(
-            env,
-            moduleNamesUtf8,
-            bytecodeArrays,
-            moduleBytecodes,
-            orderedNames))
-        return 0;
-    if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
-    {
-        throwNativeException(env, "Root module is not present in native bytecode set");
-        return 0;
-    }
-    if (hostRegistry == nullptr)
-    {
-        throwNativeException(env, "Native host registry must not be null");
-        return 0;
-    }
-    if (maxMemoryBytes <= 0)
-    {
-        throwNativeException(env, "Native instance memory limit must be positive");
-        return 0;
-    }
-
-    auto instance = std::make_unique<NativeScriptInstance>(
-        env,
-        rootModuleName,
-        std::move(moduleBytecodes),
-        hostRegistry,
-        static_cast<size_t>(maxMemoryBytes));
-    if (env->ExceptionCheck())
-        return 0;
-    if (!instance->valid())
-    {
-        throwNativeException(env, "Failed to create a Luau VM within its memory limit");
-        return 0;
-    }
-    return static_cast<jlong>(reinterpret_cast<intptr_t>(instance.release()));
-}
-
-jobject executeInstanceImpl(
-    JNIEnv* env,
-    jlong handle,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr)
-    {
-        throwNativeException(env, "Script instance handle is null");
-        return nullptr;
-    }
-    if (instance->faulted || instance->paused)
-    {
-        throwNativeException(env, "Script instance cannot execute in its current state");
-        return nullptr;
-    }
-    if (hostContext == nullptr)
-    {
-        throwNativeException(env, "Native host call context must not be null");
-        return nullptr;
-    }
-    if (maxRuntimeNanos <= 0 ||
-        maxInterruptChecks <= 0 ||
-        maxHostCalls < 0 ||
-        maxHostOutputBytes < 0)
-    {
-        throwNativeException(env, "Native execution limits are invalid");
-        return nullptr;
-    }
-
-    lua_resetthread(instance->thread);
-    lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
-    const auto rootBytecode =
-        instance->moduleBytecodes.find(instance->rootModuleName);
-    instance->loadingModules.insert(instance->rootModuleName);
-    instance->activeOperation = ActiveOperation::Execute;
-    instance->currentHostContext = hostContext;
-    jobject result = executeChunk(
-        env,
-        *instance,
-        instance->rootModuleName,
-        rootBytecode->second,
-        static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks),
-        static_cast<uint64_t>(maxHostCalls),
-        static_cast<uint64_t>(maxHostOutputBytes));
-    instance->currentHostContext = nullptr;
-    if (instance->context.lastStatus != EXECUTION_PAUSED)
-    {
-        instance->loadingModules.erase(instance->rootModuleName);
-        instance->activeOperation = ActiveOperation::None;
-    }
-    if (result == nullptr ||
-        (instance->context.lastStatus != EXECUTION_COMPLETED &&
-         instance->context.lastStatus != EXECUTION_PAUSED))
-        instance->faulted = true;
-    return result;
-}
-
-jobject initializeInstanceImpl(
-    JNIEnv* env,
-    jlong handle,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr ||
-        instance->faulted ||
-        instance->initialized ||
-        instance->paused)
-    {
-        throwNativeException(env, "Script instance cannot be initialized in its current state");
-        return nullptr;
-    }
-    if (hostContext == nullptr)
-    {
-        throwNativeException(env, "Native host call context must not be null");
-        return nullptr;
-    }
-    if (maxRuntimeNanos <= 0 ||
-        maxInterruptChecks <= 0 ||
-        maxHostCalls < 0 ||
-        maxHostOutputBytes < 0)
-    {
-        throwNativeException(env, "Native execution limits are invalid");
-        return nullptr;
-    }
-
-    lua_resetthread(instance->thread);
-    lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
-    const auto rootBytecode =
-        instance->moduleBytecodes.find(instance->rootModuleName);
-    instance->loadingModules.insert(instance->rootModuleName);
-    instance->activeOperation = ActiveOperation::Initialize;
-    instance->currentHostContext = hostContext;
-    jobject result = executeChunk(
-        env,
-        *instance,
-        instance->rootModuleName,
-        rootBytecode->second,
-        static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks),
-        static_cast<uint64_t>(maxHostCalls),
-        static_cast<uint64_t>(maxHostOutputBytes),
-        true);
-    instance->currentHostContext = nullptr;
-    if (instance->context.lastStatus != EXECUTION_PAUSED)
-    {
-        instance->loadingModules.erase(instance->rootModuleName);
-        instance->activeOperation = ActiveOperation::None;
-    }
-    if (result == nullptr ||
-        (instance->context.lastStatus != EXECUTION_COMPLETED &&
-         instance->context.lastStatus != EXECUTION_PAUSED))
-        instance->faulted = true;
-    else if (instance->context.lastStatus == EXECUTION_COMPLETED)
-        instance->initialized = true;
-    return result;
-}
-
-jobject invokeExportImpl(
-    JNIEnv* env,
-    jlong handle,
-    jbyteArray exportNameUtf8,
-    jobjectArray arguments,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr ||
-        instance->faulted ||
-        !instance->initialized ||
-        instance->paused)
-    {
-        throwNativeException(env, "Script instance cannot invoke exports in its current state");
-        return nullptr;
-    }
-    if (hostContext == nullptr)
-    {
-        throwNativeException(env, "Native host call context must not be null");
-        return nullptr;
-    }
-    if (maxRuntimeNanos <= 0 ||
-        maxInterruptChecks <= 0 ||
-        maxHostCalls < 0 ||
-        maxHostOutputBytes < 0)
-    {
-        throwNativeException(env, "Native execution limits are invalid");
-        return nullptr;
-    }
-
-    const std::string exportName = getUtf8Bytes(env, exportNameUtf8);
-    if (env->ExceptionCheck())
-        return nullptr;
-
-    ExecutionContext& context = instance->context;
-    prepareExecution(
-        context,
-        static_cast<uint64_t>(maxRuntimeNanos),
-        static_cast<uint64_t>(maxInterruptChecks),
-        static_cast<uint64_t>(maxHostCalls),
-        static_cast<uint64_t>(maxHostOutputBytes));
-    instance->activeArrayLengths.clear();
-    lua_resetthread(instance->thread);
-    lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
-    lua_getref(instance->thread, instance->exportsRef);
-    lua_getfield(instance->thread, -1, exportName.c_str());
-    lua_remove(instance->thread, -2);
-    if (lua_type(instance->thread, -1) != LUA_TFUNCTION)
-    {
-        instance->context.lastStatus = EXECUTION_RUNTIME_FAILED;
-        instance->faulted = true;
-        return newNativeExecutionResult(
-            env,
-            EXECUTION_RUNTIME_FAILED,
-            nullptr,
-            "Export is missing or is not a function: " + exportName,
-            0,
-            instance->context);
-    }
-
-    const jsize argumentCount = env->GetArrayLength(arguments);
-    ValueCodecContext argumentContext(instance->thread);
-    for (jsize index = 0; index < argumentCount; ++index)
-    {
-        jobject argument = env->GetObjectArrayElement(arguments, index);
-        if (argument == nullptr ||
-            !pushNativeValue(
-                env,
-                instance->thread,
-                argument,
-                argumentContext,
-                0))
+        LuaStatePtr validationState(luaL_newstate());
+        if (validationState == nullptr)
         {
-            if (argument != nullptr)
-                env->DeleteLocalRef(argument);
-            if (!env->ExceptionCheck())
-                throwNativeException(
-                    env,
-                    argumentContext.error.empty()
-                        ? "Failed to decode Java arguments"
-                        : argumentContext.error);
+            throwNativeException(env, "Failed to create a Luau validation state");
             return nullptr;
         }
-        env->DeleteLocalRef(argument);
-    }
-    instance->activeArrayLengths = argumentContext.arrayLengths;
 
-    instance->activeOperation = ActiveOperation::InvokeExport;
-    instance->currentHostContext = hostContext;
-    startExecutionSegment(instance->thread, context);
-    const int executionStatus =
-        lua_resume(instance->thread, nullptr, argumentCount);
-    finishExecutionSegment(context);
-    instance->currentHostContext = nullptr;
-    jobject result =
-        finishExecution(
-            env,
-            *instance,
-            executionStatus,
-            false);
-    if (context.lastStatus != EXECUTION_PAUSED)
-    {
-        instance->activeOperation = ActiveOperation::None;
-        if (result == nullptr || context.lastStatus != EXECUTION_COMPLETED)
-            instance->faulted = true;
-    }
-    return result;
-}
-
-jint setBreakpointImpl(
-    JNIEnv* env,
-    jlong handle,
-    jbyteArray moduleNameUtf8,
-    jint line,
-    jboolean enabled)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr || instance->faulted || instance->paused)
-    {
-        throwNativeException(env, "Script instance cannot change breakpoints in its current state");
-        return -1;
-    }
-    if (line <= 0)
-    {
-        throwNativeException(env, "Breakpoint line must be positive");
-        return -1;
-    }
-
-    const std::string moduleName = getUtf8Bytes(env, moduleNameUtf8);
-    if (env->ExceptionCheck())
-        return -1;
-    if (moduleName.empty() ||
-        moduleName.size() > 256 ||
-        !isValidUtf8(moduleName) ||
-        moduleName.find('\0') != std::string::npos)
-    {
-        throwNativeException(env, "Breakpoint module name is invalid");
-        return -1;
-    }
-    const auto module = instance->moduleBytecodes.find(moduleName);
-    if (module == instance->moduleBytecodes.end())
-    {
-        throwNativeException(env, "Breakpoint module is not a registered source module");
-        return -1;
-    }
-
-    int resolvedLine = -1;
-    const auto loaded = instance->moduleClosureRefs.find(moduleName);
-    if (loaded != instance->moduleClosureRefs.end())
-    {
-        lua_getref(instance->thread, loaded->second);
-        resolvedLine =
-            lua_breakpoint(
-                instance->thread,
-                -1,
-                line,
-                enabled != 0);
-        lua_pop(instance->thread, 1);
-    }
-    else
-    {
-        lua_State* scratch = lua_newthread(instance->globalState.get());
-        if (scratch == nullptr)
-        {
-            throwNativeException(env, "Failed to create a breakpoint resolution thread");
-            return -1;
-        }
-        luaL_sandboxthread(scratch);
-        lua_setthreaddata(scratch, instance);
-        const int loadStatus =
-            luau_load(
-                scratch,
-                moduleName.c_str(),
-                module->second.data(),
-                module->second.size(),
-                0);
-        if (loadStatus == LUA_OK)
-            resolvedLine = lua_breakpoint(scratch, -1, line, false);
-        else
-            throwNativeException(
-                env,
-                "Failed to load source module while resolving breakpoint: " +
-                    luaError(scratch));
-        lua_pop(instance->globalState.get(), 1);
+        const int loadStatus = luau_load(validationState.get(), chunk.c_str(), bytecode.get(), bytecodeSize, 0);
         if (loadStatus != LUA_OK)
-            return -1;
-    }
-
-    if (resolvedLine > 0)
-    {
-        if (enabled != 0)
-            instance->breakpoints[moduleName].insert(resolvedLine);
-        else if (auto configured = instance->breakpoints.find(moduleName);
-                 configured != instance->breakpoints.end())
         {
-            configured->second.erase(resolvedLine);
-            if (configured->second.empty())
-                instance->breakpoints.erase(configured);
+            throwNativeException(env, luaError(validationState.get()));
+            return nullptr;
         }
+
+        jbyteArray result = env->NewByteArray(static_cast<jsize>(bytecodeSize));
+        if (result == nullptr)
+            return nullptr;
+        env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytecodeSize), reinterpret_cast<const jbyte*>(bytecode.get()));
+        return result;
     }
-    return static_cast<jint>(resolvedLine);
-}
 
-void requestPauseInstanceImpl(JNIEnv* env, jlong handle)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr)
+    jobjectArray typecheckImpl(JNIEnv* env, jclass, jbyteArray rootModuleNameUtf8, jobjectArray moduleNamesUtf8, jobjectArray sourcesUtf8)
     {
-        throwNativeException(env, "Script instance handle is null");
-        return;
-    }
-    instance->context.pauseRequested.store(true);
-}
+        using namespace suterxom::luau;
 
-void requestTerminateInstanceImpl(JNIEnv* env, jlong handle)
-{
-    using namespace suterxom::luau;
+        const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
+        std::unordered_map<std::string, std::string> sources;
+        std::vector<std::string> orderedNames;
+        if (env->ExceptionCheck() || !readNamedByteArrays(env, moduleNamesUtf8, sourcesUtf8, sources, orderedNames))
+            return nullptr;
+        if (sources.find(rootModuleName) == sources.end())
+        {
+            throwNativeException(env, "Root module is not present in native source set");
+            return nullptr;
+        }
 
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr)
-    {
-        throwNativeException(env, "Script instance handle is null");
-        return;
-    }
-    instance->context.terminateRequested.store(true);
-}
+        InMemorySourceResolver fileResolver(std::move(sources));
+        StrictConfigResolver configResolver;
+        Luau::FrontendOptions options;
+        options.retainFullTypeGraphs = false;
+        options.runLintChecks = false;
+        options.moduleTimeLimitSec = 2.0;
+        options.applyInternalLimitScaling = true;
 
-jobject resumeInstanceImpl(
-    JNIEnv* env,
-    jlong handle,
-    jobject hostContext,
-    jint requestedStepMode)
-{
-    using namespace suterxom::luau;
+        Luau::Frontend frontend(&fileResolver, &configResolver, options);
+        Luau::registerBuiltinGlobals(frontend, frontend.globals);
+        Luau::freeze(frontend.globals.globalTypes);
 
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr ||
-        instance->faulted ||
-        !instance->paused ||
-        instance->activeOperation == ActiveOperation::None ||
-        instance->pausedThreads.empty() ||
-        instance->pausedThreads.back() != instance->thread)
-    {
-        throwNativeException(env, "Script instance is not in a resumable debugger pause");
-        return nullptr;
+        struct Diagnostic
+        {
+            int stage;
+            std::string moduleName;
+            std::string message;
+            int startLine = 0;
+            int startColumn = 0;
+            int endLine = 0;
+            int endColumn = 0;
+        };
+        std::vector<Diagnostic> diagnostics;
+        std::unordered_set<std::string> seenDiagnostics;
+        std::vector<std::string> namesToCheck;
+        namesToCheck.reserve(orderedNames.size());
+        namesToCheck.push_back(rootModuleName);
+        for (const std::string& moduleName : orderedNames)
+        {
+            if (moduleName != rootModuleName)
+                namesToCheck.push_back(moduleName);
+        }
+
+        for (const std::string& checkedName : namesToCheck)
+        {
+            Luau::CheckResult checkResult = frontend.check(checkedName);
+            for (const Luau::TypeError& error : checkResult.errors)
+            {
+                const Luau::Location& location = error.location;
+                const int stage = Luau::get<Luau::SyntaxError>(error) == nullptr ? 1 : 0;
+                const std::string moduleName = error.moduleName.empty() ? checkedName : error.moduleName;
+                const std::string message = Luau::toString(error, Luau::TypeErrorToStringOptions{&fileResolver});
+                // Luau locations are zero-based; zero means unknown in the Java API.
+                const int startLine = static_cast<int>(location.begin.line + 1);
+                const int startColumn = static_cast<int>(location.begin.column + 1);
+                const int endLine = static_cast<int>(location.end.line + 1);
+                const int endColumn = static_cast<int>(location.end.column + 1);
+                const std::string key = std::to_string(stage) + "\n" + moduleName + "\n" + std::to_string(startLine) + ":" +
+                                        std::to_string(startColumn) + "-" + std::to_string(endLine) + ":" + std::to_string(endColumn) + "\n" +
+                                        message;
+                if (seenDiagnostics.insert(key).second)
+                    diagnostics.push_back({stage, moduleName, message, startLine, startColumn, endLine, endColumn});
+            }
+            for (const Luau::ModuleName& timedOutModule : checkResult.timeoutHits)
+            {
+                const std::string message = "Type checking timed out for module " + timedOutModule;
+                const std::string key = "1\n" + timedOutModule + "\n" + message;
+                if (seenDiagnostics.insert(key).second)
+                    diagnostics.push_back({1, timedOutModule, message});
+            }
+        }
+
+        const JniSymbols* symbols = jniSymbols(env);
+        if (symbols == nullptr)
+            return nullptr;
+        jobjectArray result = env->NewObjectArray(static_cast<jsize>(diagnostics.size()), symbols->compilationDiagnostic, nullptr);
+        if (result == nullptr)
+            return nullptr;
+
+        for (size_t index = 0; index < diagnostics.size(); ++index)
+        {
+            jbyteArray moduleName = newByteArray(env, diagnostics[index].moduleName);
+            jbyteArray message = newByteArray(env, diagnostics[index].message);
+            if (moduleName == nullptr || message == nullptr)
+            {
+                if (moduleName != nullptr)
+                    env->DeleteLocalRef(moduleName);
+                if (message != nullptr)
+                    env->DeleteLocalRef(message);
+                env->DeleteLocalRef(result);
+                return nullptr;
+            }
+            jobject diagnostic = env->NewObject(
+                symbols->compilationDiagnostic,
+                symbols->compilationDiagnosticConstructor,
+                static_cast<jint>(diagnostics[index].stage),
+                moduleName,
+                message,
+                static_cast<jint>(diagnostics[index].startLine),
+                static_cast<jint>(diagnostics[index].startColumn),
+                static_cast<jint>(diagnostics[index].endLine),
+                static_cast<jint>(diagnostics[index].endColumn)
+            );
+            env->DeleteLocalRef(moduleName);
+            env->DeleteLocalRef(message);
+            if (diagnostic == nullptr)
+            {
+                env->DeleteLocalRef(result);
+                return nullptr;
+            }
+            env->SetObjectArrayElement(result, static_cast<jsize>(index), diagnostic);
+            env->DeleteLocalRef(diagnostic);
+            if (env->ExceptionCheck())
+            {
+                env->DeleteLocalRef(result);
+                return nullptr;
+            }
+        }
+        return result;
     }
-    if (hostContext == nullptr)
+
+    jobject executeImpl(
+        JNIEnv* env,
+        jclass,
+        jbyteArray rootModuleNameUtf8,
+        jobjectArray moduleNamesUtf8,
+        jobjectArray bytecodeArrays,
+        jobject hostRegistry,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes,
+        jlong maxMemoryBytes
+    )
     {
-        throwNativeException(env, "Native host call context must not be null");
-        return nullptr;
-    }
-    if (requestedStepMode < 0 || requestedStepMode > 3)
-    {
-        throwNativeException(env, "Native debugger step mode is invalid");
-        return nullptr;
-    }
-    if (instance->context.terminateRequested.exchange(false))
-        return terminatePausedExecution(
+        using namespace suterxom::luau;
+
+        const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
+        std::unordered_map<std::string, std::string> moduleBytecodes;
+        std::vector<std::string> orderedNames;
+        if (env->ExceptionCheck() || !readNamedByteArrays(env, moduleNamesUtf8, bytecodeArrays, moduleBytecodes, orderedNames))
+            return nullptr;
+        if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
+        {
+            throwNativeException(env, "Root module is not present in native bytecode set");
+            return nullptr;
+        }
+        if (hostRegistry == nullptr || hostContext == nullptr)
+        {
+            throwNativeException(env, "Native host registry and call context must not be null");
+            return nullptr;
+        }
+        if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxHostCalls < 0 || maxHostOutputBytes < 0 || maxMemoryBytes <= 0)
+        {
+            throwNativeException(env, "Native execution limits are invalid");
+            return nullptr;
+        }
+
+        auto instance = std::make_unique<NativeScriptInstance>(
+            env, rootModuleName, std::move(moduleBytecodes), hostRegistry, static_cast<size_t>(maxMemoryBytes)
+        );
+        if (env->ExceptionCheck())
+            return nullptr;
+        if (!instance->valid())
+        {
+            instance->context.exceededLimit = EXECUTION_MEMORY_LIMIT;
+            return newNativeExecutionResult(
+                env, EXECUTION_MEMORY_LIMIT, nullptr, "Failed to create a Luau VM for the compiled program", 0, instance->context
+            );
+        }
+
+        const auto rootBytecode = instance->moduleBytecodes.find(instance->rootModuleName);
+        instance->loadingModules.insert(instance->rootModuleName);
+        instance->activeOperation = ActiveOperation::Execute;
+        instance->currentHostContext = hostContext;
+        jobject result = executeChunk(
             env,
             *instance,
-            "Luau execution was terminated by a pending debugger request");
-    instance->context.pauseRequested.store(false);
-
-    const ActiveOperation operation = instance->activeOperation;
-    const bool resumeFromBreakpoint =
-        instance->pauseSnapshot.has_value() &&
-        instance->pauseSnapshot->reason == 0;
-    if (requestedStepMode == 0)
-        clearSingleStep(*instance);
-    else
-    {
-        instance->stepMode = static_cast<StepMode>(requestedStepMode);
-        instance->stepStartModule = instance->pauseSnapshot->moduleName;
-        instance->stepStartLine = instance->pauseSnapshot->line;
-        instance->stepStartDepth =
-            instance->pauseSnapshot->stackDepth;
-    }
-    instance->paused = false;
-    instance->pauseSnapshot.reset();
-    instance->skipBreakpointOnce = resumeFromBreakpoint;
-    instance->currentHostContext = hostContext;
-    startExecutionSegment(instance->thread, instance->context);
-    const int executionStatus =
-        resumePausedThreadChain(*instance);
-    finishExecutionSegment(instance->context);
-    instance->currentHostContext = nullptr;
-
-    jobject result =
-        finishExecution(
-            env,
-            *instance,
-            executionStatus,
-            operation == ActiveOperation::Initialize);
-    if (instance->context.lastStatus != EXECUTION_PAUSED)
-    {
-        instance->skipBreakpointOnce = false;
+            instance->rootModuleName,
+            rootBytecode->second,
+            static_cast<uint64_t>(maxRuntimeNanos),
+            static_cast<uint64_t>(maxInterruptChecks),
+            static_cast<uint64_t>(maxHostCalls),
+            static_cast<uint64_t>(maxHostOutputBytes)
+        );
+        instance->currentHostContext = nullptr;
         instance->loadingModules.erase(instance->rootModuleName);
         instance->activeOperation = ActiveOperation::None;
-        if (result == nullptr ||
-            instance->context.lastStatus != EXECUTION_COMPLETED)
+        return result;
+    }
+
+    jlong createInstanceImpl(
+        JNIEnv* env,
+        jbyteArray rootModuleNameUtf8,
+        jobjectArray moduleNamesUtf8,
+        jobjectArray bytecodeArrays,
+        jobject hostRegistry,
+        jlong maxMemoryBytes
+    )
+    {
+        using namespace suterxom::luau;
+
+        const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
+        std::unordered_map<std::string, std::string> moduleBytecodes;
+        std::vector<std::string> orderedNames;
+        if (env->ExceptionCheck() || !readNamedByteArrays(env, moduleNamesUtf8, bytecodeArrays, moduleBytecodes, orderedNames))
+            return 0;
+        if (moduleBytecodes.find(rootModuleName) == moduleBytecodes.end())
+        {
+            throwNativeException(env, "Root module is not present in native bytecode set");
+            return 0;
+        }
+        if (hostRegistry == nullptr)
+        {
+            throwNativeException(env, "Native host registry must not be null");
+            return 0;
+        }
+        if (maxMemoryBytes <= 0)
+        {
+            throwNativeException(env, "Native instance memory limit must be positive");
+            return 0;
+        }
+
+        auto instance = std::make_unique<NativeScriptInstance>(
+            env, rootModuleName, std::move(moduleBytecodes), hostRegistry, static_cast<size_t>(maxMemoryBytes)
+        );
+        if (env->ExceptionCheck())
+            return 0;
+        if (!instance->valid())
+        {
+            throwNativeException(env, "Failed to create a Luau VM within its memory limit");
+            return 0;
+        }
+        return static_cast<jlong>(reinterpret_cast<intptr_t>(instance.release()));
+    }
+
+    jobject executeInstanceImpl(
+        JNIEnv* env,
+        jlong handle,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr)
+        {
+            throwNativeException(env, "Script instance handle is null");
+            return nullptr;
+        }
+        if (instance->faulted || instance->paused)
+        {
+            throwNativeException(env, "Script instance cannot execute in its current state");
+            return nullptr;
+        }
+        if (hostContext == nullptr)
+        {
+            throwNativeException(env, "Native host call context must not be null");
+            return nullptr;
+        }
+        if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxHostCalls < 0 || maxHostOutputBytes < 0)
+        {
+            throwNativeException(env, "Native execution limits are invalid");
+            return nullptr;
+        }
+
+        lua_resetthread(instance->thread);
+        lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+        const auto rootBytecode = instance->moduleBytecodes.find(instance->rootModuleName);
+        instance->loadingModules.insert(instance->rootModuleName);
+        instance->activeOperation = ActiveOperation::Execute;
+        instance->currentHostContext = hostContext;
+        jobject result = executeChunk(
+            env,
+            *instance,
+            instance->rootModuleName,
+            rootBytecode->second,
+            static_cast<uint64_t>(maxRuntimeNanos),
+            static_cast<uint64_t>(maxInterruptChecks),
+            static_cast<uint64_t>(maxHostCalls),
+            static_cast<uint64_t>(maxHostOutputBytes)
+        );
+        instance->currentHostContext = nullptr;
+        if (instance->context.lastStatus != EXECUTION_PAUSED)
+        {
+            instance->loadingModules.erase(instance->rootModuleName);
+            instance->activeOperation = ActiveOperation::None;
+        }
+        if (result == nullptr || (instance->context.lastStatus != EXECUTION_COMPLETED && instance->context.lastStatus != EXECUTION_PAUSED))
             instance->faulted = true;
-        else if (operation == ActiveOperation::Initialize)
+        return result;
+    }
+
+    jobject initializeInstanceImpl(
+        JNIEnv* env,
+        jlong handle,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr || instance->faulted || instance->initialized || instance->paused)
+        {
+            throwNativeException(env, "Script instance cannot be initialized in its current state");
+            return nullptr;
+        }
+        if (hostContext == nullptr)
+        {
+            throwNativeException(env, "Native host call context must not be null");
+            return nullptr;
+        }
+        if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxHostCalls < 0 || maxHostOutputBytes < 0)
+        {
+            throwNativeException(env, "Native execution limits are invalid");
+            return nullptr;
+        }
+
+        lua_resetthread(instance->thread);
+        lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+        const auto rootBytecode = instance->moduleBytecodes.find(instance->rootModuleName);
+        instance->loadingModules.insert(instance->rootModuleName);
+        instance->activeOperation = ActiveOperation::Initialize;
+        instance->currentHostContext = hostContext;
+        jobject result = executeChunk(
+            env,
+            *instance,
+            instance->rootModuleName,
+            rootBytecode->second,
+            static_cast<uint64_t>(maxRuntimeNanos),
+            static_cast<uint64_t>(maxInterruptChecks),
+            static_cast<uint64_t>(maxHostCalls),
+            static_cast<uint64_t>(maxHostOutputBytes),
+            true
+        );
+        instance->currentHostContext = nullptr;
+        if (instance->context.lastStatus != EXECUTION_PAUSED)
+        {
+            instance->loadingModules.erase(instance->rootModuleName);
+            instance->activeOperation = ActiveOperation::None;
+        }
+        if (result == nullptr || (instance->context.lastStatus != EXECUTION_COMPLETED && instance->context.lastStatus != EXECUTION_PAUSED))
+            instance->faulted = true;
+        else if (instance->context.lastStatus == EXECUTION_COMPLETED)
             instance->initialized = true;
-    }
-    return result;
-}
-
-jobject terminatePausedInstanceImpl(
-    JNIEnv* env,
-    jlong handle)
-{
-    using namespace suterxom::luau;
-
-    auto* instance =
-        reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-    if (instance == nullptr ||
-        instance->faulted ||
-        !instance->paused ||
-        instance->activeOperation == ActiveOperation::None)
-    {
-        throwNativeException(env, "Script instance is not in a terminable debugger pause");
-        return nullptr;
+        return result;
     }
 
-    return terminatePausedExecution(
-        env,
-        *instance,
-        "Luau execution was terminated while paused");
-}
-
-JNIEXPORT jbyteArray JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_compile(
-    JNIEnv* env,
-    jclass bindingClass,
-    jbyteArray chunkNameUtf8,
-    jbyteArray sourceUtf8)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jbyteArray>(
-        env,
-        [&]()
-        {
-            return compileImpl(env, bindingClass, chunkNameUtf8, sourceUtf8);
-        });
-}
-
-JNIEXPORT jobjectArray JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheckModules(
-    JNIEnv* env,
-    jclass bindingClass,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray sourcesUtf8)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobjectArray>(
-        env,
-        [&]()
-        {
-            return typecheckImpl(
-                env,
-                bindingClass,
-                rootModuleNameUtf8,
-                moduleNamesUtf8,
-                sourcesUtf8);
-        });
-}
-
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
-    JNIEnv* env,
-    jclass bindingClass,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray bytecodeArrays,
-    jobject hostRegistry,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes,
-    jlong maxMemoryBytes)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
-        {
-            return executeImpl(
-                env,
-                bindingClass,
-                rootModuleNameUtf8,
-                moduleNamesUtf8,
-                bytecodeArrays,
-                hostRegistry,
-                hostContext,
-                maxRuntimeNanos,
-                maxInterruptChecks,
-                maxHostCalls,
-                maxHostOutputBytes,
-                maxMemoryBytes);
-        });
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
-    JNIEnv* env,
-    jclass,
-    jbyteArray rootModuleNameUtf8,
-    jobjectArray moduleNamesUtf8,
-    jobjectArray bytecodeArrays,
-    jobject hostRegistry,
-    jlong maxMemoryBytes)
-{
-    using namespace suterxom::luau;
-    try
+    jobject invokeExportImpl(
+        JNIEnv* env,
+        jlong handle,
+        jbyteArray exportNameUtf8,
+        jobjectArray arguments,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
     {
-        return createInstanceImpl(
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr || instance->faulted || !instance->initialized || instance->paused)
+        {
+            throwNativeException(env, "Script instance cannot invoke exports in its current state");
+            return nullptr;
+        }
+        if (hostContext == nullptr)
+        {
+            throwNativeException(env, "Native host call context must not be null");
+            return nullptr;
+        }
+        if (maxRuntimeNanos <= 0 || maxInterruptChecks <= 0 || maxHostCalls < 0 || maxHostOutputBytes < 0)
+        {
+            throwNativeException(env, "Native execution limits are invalid");
+            return nullptr;
+        }
+
+        const std::string exportName = getUtf8Bytes(env, exportNameUtf8);
+        if (env->ExceptionCheck())
+            return nullptr;
+
+        ExecutionContext& context = instance->context;
+        prepareExecution(
+            context,
+            static_cast<uint64_t>(maxRuntimeNanos),
+            static_cast<uint64_t>(maxInterruptChecks),
+            static_cast<uint64_t>(maxHostCalls),
+            static_cast<uint64_t>(maxHostOutputBytes)
+        );
+        instance->activeArrayLengths.clear();
+        lua_resetthread(instance->thread);
+        lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
+        lua_getref(instance->thread, instance->exportsRef);
+        lua_getfield(instance->thread, -1, exportName.c_str());
+        lua_remove(instance->thread, -2);
+        if (lua_type(instance->thread, -1) != LUA_TFUNCTION)
+        {
+            instance->context.lastStatus = EXECUTION_RUNTIME_FAILED;
+            instance->faulted = true;
+            return newNativeExecutionResult(
+                env, EXECUTION_RUNTIME_FAILED, nullptr, "Export is missing or is not a function: " + exportName, 0, instance->context
+            );
+        }
+
+        const jsize argumentCount = env->GetArrayLength(arguments);
+        ValueCodecContext argumentContext(instance->thread);
+        for (jsize index = 0; index < argumentCount; ++index)
+        {
+            jobject argument = env->GetObjectArrayElement(arguments, index);
+            if (argument == nullptr || !pushNativeValue(env, instance->thread, argument, argumentContext, 0))
+            {
+                if (argument != nullptr)
+                    env->DeleteLocalRef(argument);
+                if (!env->ExceptionCheck())
+                    throwNativeException(env, argumentContext.error.empty() ? "Failed to decode Java arguments" : argumentContext.error);
+                return nullptr;
+            }
+            env->DeleteLocalRef(argument);
+        }
+        instance->activeArrayLengths = argumentContext.arrayLengths;
+
+        instance->activeOperation = ActiveOperation::InvokeExport;
+        instance->currentHostContext = hostContext;
+        startExecutionSegment(instance->thread, context);
+        const int executionStatus = lua_resume(instance->thread, nullptr, argumentCount);
+        finishExecutionSegment(context);
+        instance->currentHostContext = nullptr;
+        jobject result = finishExecution(env, *instance, executionStatus, false);
+        if (context.lastStatus != EXECUTION_PAUSED)
+        {
+            instance->activeOperation = ActiveOperation::None;
+            if (result == nullptr || context.lastStatus != EXECUTION_COMPLETED)
+                instance->faulted = true;
+        }
+        return result;
+    }
+
+    jint setBreakpointImpl(JNIEnv* env, jlong handle, jbyteArray moduleNameUtf8, jint line, jboolean enabled)
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr || instance->faulted || instance->paused)
+        {
+            throwNativeException(env, "Script instance cannot change breakpoints in its current state");
+            return -1;
+        }
+        if (line <= 0)
+        {
+            throwNativeException(env, "Breakpoint line must be positive");
+            return -1;
+        }
+
+        const std::string moduleName = getUtf8Bytes(env, moduleNameUtf8);
+        if (env->ExceptionCheck())
+            return -1;
+        if (moduleName.empty() || moduleName.size() > 256 || !isValidUtf8(moduleName) || moduleName.find('\0') != std::string::npos)
+        {
+            throwNativeException(env, "Breakpoint module name is invalid");
+            return -1;
+        }
+        const auto module = instance->moduleBytecodes.find(moduleName);
+        if (module == instance->moduleBytecodes.end())
+        {
+            throwNativeException(env, "Breakpoint module is not a registered source module");
+            return -1;
+        }
+
+        int resolvedLine = -1;
+        const auto loaded = instance->moduleClosureRefs.find(moduleName);
+        if (loaded != instance->moduleClosureRefs.end())
+        {
+            lua_getref(instance->thread, loaded->second);
+            resolvedLine = lua_breakpoint(instance->thread, -1, line, enabled != 0);
+            lua_pop(instance->thread, 1);
+        }
+        else
+        {
+            lua_State* scratch = lua_newthread(instance->globalState.get());
+            if (scratch == nullptr)
+            {
+                throwNativeException(env, "Failed to create a breakpoint resolution thread");
+                return -1;
+            }
+            luaL_sandboxthread(scratch);
+            lua_setthreaddata(scratch, instance);
+            const int loadStatus = luau_load(scratch, moduleName.c_str(), module->second.data(), module->second.size(), 0);
+            if (loadStatus == LUA_OK)
+                resolvedLine = lua_breakpoint(scratch, -1, line, false);
+            else
+                throwNativeException(env, "Failed to load source module while resolving breakpoint: " + luaError(scratch));
+            lua_pop(instance->globalState.get(), 1);
+            if (loadStatus != LUA_OK)
+                return -1;
+        }
+
+        if (resolvedLine > 0)
+        {
+            if (enabled != 0)
+                instance->breakpoints[moduleName].insert(resolvedLine);
+            else if (auto configured = instance->breakpoints.find(moduleName); configured != instance->breakpoints.end())
+            {
+                configured->second.erase(resolvedLine);
+                if (configured->second.empty())
+                    instance->breakpoints.erase(configured);
+            }
+        }
+        return static_cast<jint>(resolvedLine);
+    }
+
+    void requestPauseInstanceImpl(JNIEnv* env, jlong handle)
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr)
+        {
+            throwNativeException(env, "Script instance handle is null");
+            return;
+        }
+        instance->context.pauseRequested.store(true);
+    }
+
+    void requestTerminateInstanceImpl(JNIEnv* env, jlong handle)
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr)
+        {
+            throwNativeException(env, "Script instance handle is null");
+            return;
+        }
+        instance->context.terminateRequested.store(true);
+    }
+
+    jobject resumeInstanceImpl(JNIEnv* env, jlong handle, jobject hostContext, jint requestedStepMode)
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr || instance->faulted || !instance->paused || instance->activeOperation == ActiveOperation::None ||
+            instance->pausedThreads.empty() || instance->pausedThreads.back() != instance->thread)
+        {
+            throwNativeException(env, "Script instance is not in a resumable debugger pause");
+            return nullptr;
+        }
+        if (hostContext == nullptr)
+        {
+            throwNativeException(env, "Native host call context must not be null");
+            return nullptr;
+        }
+        if (requestedStepMode < 0 || requestedStepMode > 3)
+        {
+            throwNativeException(env, "Native debugger step mode is invalid");
+            return nullptr;
+        }
+        if (instance->context.terminateRequested.exchange(false))
+            return terminatePausedExecution(env, *instance, "Luau execution was terminated by a pending debugger request");
+        instance->context.pauseRequested.store(false);
+
+        const ActiveOperation operation = instance->activeOperation;
+        const bool resumeFromBreakpoint = instance->pauseSnapshot.has_value() && instance->pauseSnapshot->reason == 0;
+        if (requestedStepMode == 0)
+            clearSingleStep(*instance);
+        else
+        {
+            instance->stepMode = static_cast<StepMode>(requestedStepMode);
+            instance->stepStartModule = instance->pauseSnapshot->moduleName;
+            instance->stepStartLine = instance->pauseSnapshot->line;
+            instance->stepStartDepth = instance->pauseSnapshot->stackDepth;
+        }
+        instance->paused = false;
+        instance->pauseSnapshot.reset();
+        instance->skipBreakpointOnce = resumeFromBreakpoint;
+        instance->currentHostContext = hostContext;
+        startExecutionSegment(instance->thread, instance->context);
+        const int executionStatus = resumePausedThreadChain(*instance);
+        finishExecutionSegment(instance->context);
+        instance->currentHostContext = nullptr;
+
+        jobject result = finishExecution(env, *instance, executionStatus, operation == ActiveOperation::Initialize);
+        if (instance->context.lastStatus != EXECUTION_PAUSED)
+        {
+            instance->skipBreakpointOnce = false;
+            instance->loadingModules.erase(instance->rootModuleName);
+            instance->activeOperation = ActiveOperation::None;
+            if (result == nullptr || instance->context.lastStatus != EXECUTION_COMPLETED)
+                instance->faulted = true;
+            else if (operation == ActiveOperation::Initialize)
+                instance->initialized = true;
+        }
+        return result;
+    }
+
+    jobject terminatePausedInstanceImpl(JNIEnv* env, jlong handle)
+    {
+        using namespace suterxom::luau;
+
+        auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+        if (instance == nullptr || instance->faulted || !instance->paused || instance->activeOperation == ActiveOperation::None)
+        {
+            throwNativeException(env, "Script instance is not in a terminable debugger pause");
+            return nullptr;
+        }
+
+        return terminatePausedExecution(env, *instance, "Luau execution was terminated while paused");
+    }
+
+    JNIEXPORT jbyteArray JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_compile(
+        JNIEnv* env,
+        jclass bindingClass,
+        jbyteArray chunkNameUtf8,
+        jbyteArray sourceUtf8
+    )
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jbyteArray>(
             env,
-            rootModuleNameUtf8,
-            moduleNamesUtf8,
-            bytecodeArrays,
-            hostRegistry,
-            maxMemoryBytes);
+            [&]()
+            {
+                return compileImpl(env, bindingClass, chunkNameUtf8, sourceUtf8);
+            }
+        );
     }
-    catch (const std::exception& exception)
+
+    JNIEXPORT jobjectArray JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheckModules(
+        JNIEnv* env,
+        jclass bindingClass,
+        jbyteArray rootModuleNameUtf8,
+        jobjectArray moduleNamesUtf8,
+        jobjectArray sourcesUtf8
+    )
     {
-        if (!env->ExceptionCheck())
-            throwNativeException(env, std::string("Native Luau failure: ") + exception.what());
-    }
-    catch (...)
-    {
-        if (!env->ExceptionCheck())
-            throwNativeException(env, "Unknown native Luau failure");
-    }
-    return 0;
-}
-
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
-        {
-            return executeInstanceImpl(
-                env,
-                handle,
-                hostContext,
-                maxRuntimeNanos,
-                maxInterruptChecks,
-                maxHostCalls,
-                maxHostOutputBytes);
-        });
-}
-
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
-        {
-            return initializeInstanceImpl(
-                env,
-                handle,
-                hostContext,
-                maxRuntimeNanos,
-                maxInterruptChecks,
-                maxHostCalls,
-                maxHostOutputBytes);
-        });
-}
-
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
-    JNIEnv* env,
-    jclass,
-    jlong handle,
-    jbyteArray exportNameUtf8,
-    jobjectArray arguments,
-    jobject hostContext,
-    jlong maxRuntimeNanos,
-    jlong maxInterruptChecks,
-    jlong maxHostCalls,
-    jlong maxHostOutputBytes)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
-        {
-            return invokeExportImpl(
-                env,
-                handle,
-                exportNameUtf8,
-                arguments,
-                hostContext,
-                maxRuntimeNanos,
-                maxInterruptChecks,
-                maxHostCalls,
-                maxHostOutputBytes);
-        });
-}
-
-JNIEXPORT jint JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_setBreakpoint(
-    JNIEnv* env,
-    jclass,
-    jlong handle,
-    jbyteArray moduleNameUtf8,
-    jint line,
-    jboolean enabled)
-{
-    using namespace suterxom::luau;
-    try
-    {
-        return setBreakpointImpl(
+        using namespace suterxom::luau;
+        return guardNativeCall<jobjectArray>(
             env,
-            handle,
-            moduleNameUtf8,
-            line,
-            enabled);
+            [&]()
+            {
+                return typecheckImpl(env, bindingClass, rootModuleNameUtf8, moduleNamesUtf8, sourcesUtf8);
+            }
+        );
     }
-    catch (const std::exception& exception)
+
+    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
+        JNIEnv* env,
+        jclass bindingClass,
+        jbyteArray rootModuleNameUtf8,
+        jobjectArray moduleNamesUtf8,
+        jobjectArray bytecodeArrays,
+        jobject hostRegistry,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes,
+        jlong maxMemoryBytes
+    )
     {
-        if (!env->ExceptionCheck())
-            throwNativeException(env, std::string("Native Luau failure: ") + exception.what());
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return executeImpl(
+                    env,
+                    bindingClass,
+                    rootModuleNameUtf8,
+                    moduleNamesUtf8,
+                    bytecodeArrays,
+                    hostRegistry,
+                    hostContext,
+                    maxRuntimeNanos,
+                    maxInterruptChecks,
+                    maxHostCalls,
+                    maxHostOutputBytes,
+                    maxMemoryBytes
+                );
+            }
+        );
     }
-    catch (...)
+
+    JNIEXPORT jlong JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
+        JNIEnv* env,
+        jclass,
+        jbyteArray rootModuleNameUtf8,
+        jobjectArray moduleNamesUtf8,
+        jobjectArray bytecodeArrays,
+        jobject hostRegistry,
+        jlong maxMemoryBytes
+    )
     {
-        if (!env->ExceptionCheck())
-            throwNativeException(env, "Unknown native Luau failure");
+        using namespace suterxom::luau;
+        try
+        {
+            return createInstanceImpl(env, rootModuleNameUtf8, moduleNamesUtf8, bytecodeArrays, hostRegistry, maxMemoryBytes);
+        }
+        catch (const std::exception& exception)
+        {
+            if (!env->ExceptionCheck())
+                throwNativeException(env, std::string("Native Luau failure: ") + exception.what());
+        }
+        catch (...)
+        {
+            if (!env->ExceptionCheck())
+                throwNativeException(env, "Unknown native Luau failure");
+        }
+        return 0;
     }
-    return -1;
-}
 
-JNIEXPORT void JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestPauseInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle)
-{
-    requestPauseInstanceImpl(env, handle);
-}
+    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
+        JNIEnv* env,
+        jclass,
+        jlong handle,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return executeInstanceImpl(env, handle, hostContext, maxRuntimeNanos, maxInterruptChecks, maxHostCalls, maxHostOutputBytes);
+            }
+        );
+    }
 
-JNIEXPORT void JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestTerminateInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle)
-{
-    requestTerminateInstanceImpl(env, handle);
-}
+    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
+        JNIEnv* env,
+        jclass,
+        jlong handle,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return initializeInstanceImpl(env, handle, hostContext, maxRuntimeNanos, maxInterruptChecks, maxHostCalls, maxHostOutputBytes);
+            }
+        );
+    }
 
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_resumeInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle,
-    jobject hostContext,
-    jint stepMode)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
+    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
+        JNIEnv* env,
+        jclass,
+        jlong handle,
+        jbyteArray exportNameUtf8,
+        jobjectArray arguments,
+        jobject hostContext,
+        jlong maxRuntimeNanos,
+        jlong maxInterruptChecks,
+        jlong maxHostCalls,
+        jlong maxHostOutputBytes
+    )
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return invokeExportImpl(
+                    env, handle, exportNameUtf8, arguments, hostContext, maxRuntimeNanos, maxInterruptChecks, maxHostCalls, maxHostOutputBytes
+                );
+            }
+        );
+    }
+
+    JNIEXPORT jint JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_setBreakpoint(
+        JNIEnv* env,
+        jclass,
+        jlong handle,
+        jbyteArray moduleNameUtf8,
+        jint line,
+        jboolean enabled
+    )
+    {
+        using namespace suterxom::luau;
+        try
         {
-            return resumeInstanceImpl(
-                env,
-                handle,
-                hostContext,
-                stepMode);
-        });
-}
-
-JNIEXPORT jobject JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_terminatePausedInstance(
-    JNIEnv* env,
-    jclass,
-    jlong handle)
-{
-    using namespace suterxom::luau;
-    return guardNativeCall<jobject>(
-        env,
-        [&]()
+            return setBreakpointImpl(env, handle, moduleNameUtf8, line, enabled);
+        }
+        catch (const std::exception& exception)
         {
-            return terminatePausedInstanceImpl(env, handle);
-        });
-}
+            if (!env->ExceptionCheck())
+                throwNativeException(env, std::string("Native Luau failure: ") + exception.what());
+        }
+        catch (...)
+        {
+            if (!env->ExceptionCheck())
+                throwNativeException(env, "Unknown native Luau failure");
+        }
+        return -1;
+    }
 
-JNIEXPORT void JNICALL
-Java_io_github_suterxom_luau_internal_jni_NativeBindings_closeInstance(
-    JNIEnv*,
-    jclass,
-    jlong handle)
-{
-    using namespace suterxom::luau;
-    delete reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
-}
+    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestPauseInstance(JNIEnv* env, jclass, jlong handle)
+    {
+        requestPauseInstanceImpl(env, handle);
+    }
+
+    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestTerminateInstance(JNIEnv* env, jclass, jlong handle)
+    {
+        requestTerminateInstanceImpl(env, handle);
+    }
+
+    JNIEXPORT jobject JNICALL
+    Java_io_github_suterxom_luau_internal_jni_NativeBindings_resumeInstance(JNIEnv* env, jclass, jlong handle, jobject hostContext, jint stepMode)
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return resumeInstanceImpl(env, handle, hostContext, stepMode);
+            }
+        );
+    }
+
+    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_terminatePausedInstance(JNIEnv* env, jclass, jlong handle)
+    {
+        using namespace suterxom::luau;
+        return guardNativeCall<jobject>(
+            env,
+            [&]()
+            {
+                return terminatePausedInstanceImpl(env, handle);
+            }
+        );
+    }
+
+    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_closeInstance(JNIEnv*, jclass, jlong handle)
+    {
+        using namespace suterxom::luau;
+        delete reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
+    }
 }

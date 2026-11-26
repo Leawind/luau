@@ -21,13 +21,13 @@ Luau Runtime is a Minecraft mod library that lets other mods compile and run san
 
 A release produces one `luau-<version>-universal.jar` that contains every supported platform:
 
-| Platform | Native library |
-| --- | --- |
-| `windows-x86_64` | `luau_jni.dll` |
-| `linux-x86_64` | `libluau_jni.so` |
-| `linux-aarch64` | `libluau_jni.so` |
-| `macos-x86_64` | `libluau_jni.dylib` |
-| `macos-aarch64` | `libluau_jni.dylib` |
+| Platform         | Native library      |
+| ---------------- | ------------------- |
+| `windows-x86_64` | `luau_jni.dll`      |
+| `linux-x86_64`   | `libluau_jni.so`    |
+| `linux-aarch64`  | `libluau_jni.so`    |
+| `macos-x86_64`   | `libluau_jni.dylib` |
+| `macos-aarch64`  | `libluau_jni.dylib` |
 
 musl Linux, Windows ARM64, and Android are not supported.
 

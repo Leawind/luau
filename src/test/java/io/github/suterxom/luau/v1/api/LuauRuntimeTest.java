@@ -3,6 +3,7 @@ package io.github.suterxom.luau.v1.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,13 +21,30 @@ import io.github.suterxom.luau.v1.api.value.LuauNumber;
 import io.github.suterxom.luau.v1.api.value.LuauString;
 import io.github.suterxom.luau.v1.api.value.LuauTable;
 import io.github.suterxom.luau.v1.api.value.LuauValue;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 
 class LuauRuntimeTest {
   private final LuauRuntime runtime = LuauRuntime.getInstance();
+
+  /** Reads the runtime version the packaging recorded for the staged native library. */
+  private static String packagedRuntimeVersion() {
+    try (InputStream stream =
+        LuauRuntimeTest.class.getResourceAsStream("/META-INF/luau/natives/manifest.properties")) {
+      assertNotNull(stream, "the native manifest must be on the test classpath");
+      Properties manifest = new Properties();
+      manifest.load(stream);
+      return manifest.getProperty("runtimeVersion");
+    } catch (IOException exception) {
+      throw new UncheckedIOException(exception);
+    }
+  }
 
   @Test
   void reportsMatchingRuntimeInformation() {
@@ -35,7 +53,9 @@ class LuauRuntimeTest {
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
     assertEquals(11, info.jniAbiVersion());
-    assertTrue(info.runtimeVersion().startsWith("0.1.0"));
+    // The expected version comes from the packaged manifest instead of a literal: a hard coded
+    // one breaks on every version bump and says nothing about the built native library.
+    assertEquals(packagedRuntimeVersion(), info.runtimeVersion());
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
 

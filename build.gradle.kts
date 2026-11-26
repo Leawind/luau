@@ -260,6 +260,13 @@ val buildNative by tasks.registering(Exec::class) {
 
     inputs.dir("native/src")
     inputs.dir("native/luau")
+    // The compile definitions come from these, so a change has to rebuild the library: without
+    // them a version bump only reconfigures CMake and the stale binary stays in place, still
+    // reporting the old version.
+    inputs.property("runtimeVersion", version)
+    inputs.property("luauVersion", luauVersion)
+    inputs.property("luauCommit", luauCommit)
+    inputs.property("jniAbiVersion", jniAbiVersion)
     inputs.property("nativeSanitizers", nativeSanitizers)
     outputs.file(nativeLibrary)
 

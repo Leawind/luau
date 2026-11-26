@@ -30,15 +30,15 @@ class HostModulesTest {
   private static final String HOST_NAME = "test/host@1";
   private static final String HOST_DECLARATION =
       """
-    return (nil :: any) :: {
-        echo: (any) -> any,
-        next: () -> number,
-        contextName: () -> string,
-        expectedFailure: () -> any,
-        unexpectedFailure: () -> any,
-        emit: (number) -> number,
-    }
-    """;
+      return (nil :: any) :: {
+          echo: (any) -> any,
+          next: () -> number,
+          contextName: () -> string,
+          expectedFailure: () -> any,
+          unexpectedFailure: () -> any,
+          emit: (number) -> number,
+      }
+      """;
 
   private final LuauRuntime runtime = LuauRuntime.getInstance();
 
@@ -51,9 +51,9 @@ class HostModulesTest {
             Map.of(
                 "main",
                 """
-      local host = require("test/host@1")
-      return host.next()
-      """),
+                local host = require("test/host@1")
+                return host.next()
+                """),
             List.of(statefulHostModule(factories)));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
@@ -77,29 +77,29 @@ class HostModulesTest {
             Map.of(
                 "main",
                 """
-      local host = require("test/host@1")
-      local same = require("test/host@1")
-      return {
-          sameModule = function(): boolean
-              return host == same
-          end,
-          next = function(): number
-              return host.next()
-          end,
-          contextName = function(): string
-              return host.contextName()
-          end,
-          echo = function(): any
-              return host.echo({
-                  message = "你好",
-                  values = ({true, 42} :: {any}),
-              })
-          end,
-          roundTrip = function(value: any): any
-              return host.echo(value)
-          end,
-      }
-      """),
+                local host = require("test/host@1")
+                local same = require("test/host@1")
+                return {
+                    sameModule = function(): boolean
+                        return host == same
+                    end,
+                    next = function(): number
+                        return host.next()
+                    end,
+                    contextName = function(): string
+                        return host.contextName()
+                    end,
+                    echo = function(): any
+                        return host.echo({
+                            message = "你好",
+                            values = ({true, 42} :: {any}),
+                        })
+                    end,
+                    roundTrip = function(value: any): any
+                        return host.echo(value)
+                    end,
+                }
+                """),
             List.of(host));
 
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
@@ -190,16 +190,16 @@ class HostModulesTest {
             Map.of(
                 "main",
                 """
-      local host = require("test/host@1")
-      return {
-          twice = function(): number
-              return host.next() + host.next()
-          end,
-          emit = function(bytes: number): number
-              return host.emit(bytes)
-          end,
-      }
-      """),
+                local host = require("test/host@1")
+                return {
+                    twice = function(): number
+                        return host.next() + host.next()
+                    end,
+                    emit = function(bytes: number): number
+                        return host.emit(bytes)
+                    end,
+                }
+                """),
             List.of(statefulHostModule(new AtomicInteger())));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
@@ -244,10 +244,10 @@ class HostModulesTest {
             Map.of(
                 "main",
                 """
-      local host = require("test/host@1")
-      local value: string = host.next()
-      return value
-      """),
+                local host = require("test/host@1")
+                local value: string = host.next()
+                return value
+                """),
             List.of(host));
     assertFalse(wrongType.successful());
     assertTrue(
@@ -272,13 +272,13 @@ class HostModulesTest {
             Map.of(
                 "main",
                 """
-      local host = require("test/host@1")
-      return {
-          mutate = function()
-              (host :: any).next = nil
-          end,
-      }
-      """),
+                local host = require("test/host@1")
+                return {
+                    mutate = function()
+                        (host :: any).next = nil
+                    end,
+                }
+                """),
             List.of(statefulHostModule(new AtomicInteger())));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
@@ -296,16 +296,16 @@ class HostModulesTest {
     return Map.of(
         "main",
         """
-      local host = require("test/host@1")
-      return {
-          expected = function()
-              return host.expectedFailure()
-          end,
-          unexpected = function()
-              return host.unexpectedFailure()
-          end,
-      }
-      """);
+        local host = require("test/host@1")
+        return {
+            expected = function()
+                return host.expectedFailure()
+            end,
+            unexpected = function()
+                return host.unexpectedFailure()
+            end,
+        }
+        """);
   }
 
   private static HostModule statefulHostModule(AtomicInteger factories) {

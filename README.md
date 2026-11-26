@@ -42,6 +42,8 @@ git submodule update --init --recursive
 
 A normal build compiles the JNI library for the current platform and embeds it in the produced JAR. On Windows the native build requires Visual Studio Build Tools with the C++ workload; the build script imports the MSVC environment itself, so no developer command prompt is needed.
 
+Building requires JDK 21 or newer. The produced classes target Java 17.
+
 ## Quick start
 
 Compile a root module, create an instance, initialize it once, and invoke an exported function:

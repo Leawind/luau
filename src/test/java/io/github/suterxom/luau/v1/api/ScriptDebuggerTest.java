@@ -33,32 +33,32 @@ class ScriptDebuggerTest {
   private static final String HOST_NAME = "debug/host@1";
   private static final String HOST_DECLARATION =
       """
-    return (nil :: any) :: {
-        beforePause: () -> number,
-        fromContext: () -> number,
-    }
-    """;
+      return (nil :: any) :: {
+          beforePause: () -> number,
+          fromContext: () -> number,
+      }
+      """;
   private static final String CONTROL_NAME = "debug/control@1";
   private static final String CONTROL_DECLARATION =
       """
-    return (nil :: any) :: {
-        synchronize: () -> number,
-    }
-    """;
+      return (nil :: any) :: {
+          synchronize: () -> number,
+      }
+      """;
   private static final String CONTROL_PROGRAM =
       """
-    local control = require("debug/control@1")
-    return {
-        run = function(): number
-            control.synchronize()
-            local total = 0
-            for value = 1, 100 do
-                total += value
-            end
-            return total
-        end,
-    }
-    """;
+      local control = require("debug/control@1")
+      return {
+          run = function(): number
+              control.synchronize()
+              local total = 0
+              for value = 1, 100 do
+                  total += value
+              end
+              return total
+          end,
+      }
+      """;
 
   private final LuauRuntime runtime = LuauRuntime.getInstance();
 
@@ -71,14 +71,13 @@ class ScriptDebuggerTest {
         ScriptInstance instance = chunk.createInstance()) {
       AtomicReference<Throwable> failure = new AtomicReference<>();
       Thread otherThread =
-          new Thread(
-              () -> {
-                try {
-                  instance.debugger().setBreakpoint("debug/thread", 1);
-                } catch (Throwable throwable) {
-                  failure.set(throwable);
-                }
-              });
+          new Thread(() -> {
+            try {
+              instance.debugger().setBreakpoint("debug/thread", 1);
+            } catch (Throwable throwable) {
+              failure.set(throwable);
+            }
+          });
       otherThread.start();
       otherThread.join();
 
@@ -93,10 +92,10 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/execute",
             """
-      local value = 40
-      value += 2
-      return value
-      """);
+            local value = 40
+            value += 2
+            return value
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -125,15 +124,15 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/main",
             """
-      local total = 1
+            local total = 1
 
-      total += 2
-      return {
-          value = function(): number
-              return total
-          end,
-      }
-      """);
+            total += 2
+            return {
+                value = function(): number
+                    return total
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -184,22 +183,22 @@ class ScriptDebuggerTest {
             Map.of(
                 "app/main",
                 """
-      local worker = require("lib/worker")
-      return {
-          run = function(value: any): any
-              return worker.run(value)
-          end,
-      }
-      """,
+                local worker = require("lib/worker")
+                return {
+                    run = function(value: any): any
+                        return worker.run(value)
+                    end,
+                }
+                """,
                 "lib/worker",
                 """
-                                                           return {
-                                                               run = function(value: any): any
-                                                                   local result = value
-                                                                   return result
-                                                               end,
-                                                           }
-                                                           """));
+                return {
+                    run = function(value: any): any
+                        local result = value
+                        return result
+                    end,
+                }
+                """));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -229,22 +228,22 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/coroutine",
             """
-      return {
-          run = function()
-              local thread = coroutine.create(function()
-                  local value = 40
-                  value += 1
-                  value += 1
-                  return value
-              end)
-              local ok, result = coroutine.resume(thread)
-              if not ok then
-                  error(result)
-              end
-              return result
-          end,
-      }
-      """);
+            return {
+                run = function()
+                    local thread = coroutine.create(function()
+                        local value = 40
+                        value += 1
+                        value += 1
+                        return value
+                    end)
+                    local ok, result = coroutine.resume(thread)
+                    if not ok then
+                        error(result)
+                    end
+                    return result
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -277,24 +276,24 @@ class ScriptDebuggerTest {
             Map.of(
                 "app/main",
                 """
-      local middle = require("lib/middle")
-      return {
-          read = function(): number
-              return middle.value
-          end,
-      }
-      """,
+                local middle = require("lib/middle")
+                return {
+                    read = function(): number
+                        return middle.value
+                    end,
+                }
+                """,
                 "lib/middle",
                 """
-                                                           local leaf = require("lib/leaf")
-                                                           return {value = leaf.value}
-                                                           """,
+                local leaf = require("lib/leaf")
+                return {value = leaf.value}
+                """,
                 "lib/leaf",
                 """
-                                                           local value = 40
-                                                           value += 2
-                                                           return {value = value}
-                                                           """));
+                local value = 40
+                value += 2
+                return {value = value}
+                """));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -343,15 +342,15 @@ class ScriptDebuggerTest {
             Map.of(
                 "debug/host-main",
                 """
-      local host = require("debug/host@1")
-      return {
-          run = function(): number
-              local before = host.beforePause()
-              local marker = before
-              return marker + host.fromContext()
-          end,
-      }
-      """),
+                local host = require("debug/host@1")
+                return {
+                    run = function(): number
+                        local before = host.beforePause()
+                        local marker = before
+                        return marker + host.fromContext()
+                    end,
+                }
+                """),
             List.of(host));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
@@ -465,19 +464,19 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/step",
             """
-      return {
-          run = function(): number
-              local value = 1
-              local function add()
-                  value += 1
-                  value += 1
-              end
-              add()
-              value += 10
-              return value
-          end,
-      }
-      """);
+            return {
+                run = function(): number
+                    local value = 1
+                    local function add()
+                        value += 1
+                        value += 1
+                    end
+                    add()
+                    value += 10
+                    return value
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -531,21 +530,21 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/step-coroutine",
             """
-      return {
-          run = function()
-              local thread = coroutine.create(function()
-                  local value = 41
-                  value += 1
-                  return value
-              end)
-              local ok, result = coroutine.resume(thread)
-              if not ok then
-                  error(result)
-              end
-              return result
-          end,
-      }
-      """);
+            return {
+                run = function()
+                    local thread = coroutine.create(function()
+                        local value = 41
+                        value += 1
+                        return value
+                    end)
+                    local ok, result = coroutine.resume(thread)
+                    if not ok then
+                        error(result)
+                    end
+                    return result
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -590,15 +589,15 @@ class ScriptDebuggerTest {
             Map.of(
                 "debug/step-module",
                 """
-      local value = require("lib/step-value")
-      return {read = function(): number return value end}
-      """,
+                local value = require("lib/step-value")
+                return {read = function(): number return value end}
+                """,
                 "lib/step-value",
                 """
-                                                                    local value = 41
-                                                                    value += 1
-                                                                    return value
-                                                                    """));
+                local value = 41
+                value += 1
+                return value
+                """));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -626,13 +625,13 @@ class ScriptDebuggerTest {
         runtime.compile(
             "debug/terminate",
             """
-      return {
-          run = function(): number
-              local value = 42
-              return value
-          end,
-      }
-      """);
+            return {
+                run = function(): number
+                    local value = 42
+                    return value
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -660,14 +659,13 @@ class ScriptDebuggerTest {
 
       AtomicReference<Throwable> requestFailure = new AtomicReference<>();
       Thread requester =
-          new Thread(
-              () -> {
-                try {
-                  instance.debugger().requestTerminate();
-                } catch (Throwable throwable) {
-                  requestFailure.set(throwable);
-                }
-              });
+          new Thread(() -> {
+            try {
+              instance.debugger().requestTerminate();
+            } catch (Throwable throwable) {
+              requestFailure.set(throwable);
+            }
+          });
       requester.start();
       requester.join();
       assertNull(requestFailure.get());
@@ -697,17 +695,16 @@ class ScriptDebuggerTest {
   private static Thread requestFromOtherThread(
       RequestControl control, Runnable request, AtomicReference<Throwable> failure) {
     Thread thread =
-        new Thread(
-            () -> {
-              try {
-                control.awaitExecution();
-                request.run();
-              } catch (Throwable throwable) {
-                failure.set(throwable);
-              } finally {
-                control.releaseExecution();
-              }
-            });
+        new Thread(() -> {
+          try {
+            control.awaitExecution();
+            request.run();
+          } catch (Throwable throwable) {
+            failure.set(throwable);
+          } finally {
+            control.releaseExecution();
+          }
+        });
     thread.start();
     return thread;
   }

@@ -43,8 +43,8 @@ class LuauRuntimeTest {
         runtime.compile(
             "模块😀",
             """
-      return nil, true, 40 + 2, "你好，Luau"
-      """);
+            return nil, true, 40 + 2, "你好，Luau"
+            """);
 
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -73,11 +73,9 @@ class LuauRuntimeTest {
             .allMatch(diagnostic -> diagnostic.moduleName().equals("broken")));
     assertTrue(
         compilation.diagnostics().stream()
-            .allMatch(
-                diagnostic ->
-                    diagnostic.stage()
-                        == io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic.Stage
-                            .PARSE));
+            .allMatch(diagnostic ->
+                diagnostic.stage()
+                    == io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic.Stage.PARSE));
   }
 
   @Test
@@ -86,9 +84,9 @@ class LuauRuntimeTest {
         runtime.compile(
             "typed",
             """
-      local count: number = "not a number"
-      return count
-      """);
+            local count: number = "not a number"
+            return count
+            """);
 
     assertFalse(compilation.successful());
     assertEquals(
@@ -166,11 +164,11 @@ class LuauRuntimeTest {
         runtime.compile(
             "memory-limit",
             """
-      local values = {}
-      while true do
-          table.insert(values, buffer.create(4096))
-      end
-      """);
+            local values = {}
+            while true do
+                table.insert(values, buffer.create(4096))
+            end
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -189,10 +187,10 @@ class LuauRuntimeTest {
         runtime.compile(
             "persistent",
             """
-      --!nocheck
-      counter = (counter or 0) + 1
-      return counter
-      """);
+            --!nocheck
+            counter = (counter or 0) + 1
+            return counter
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -238,20 +236,20 @@ class LuauRuntimeTest {
         runtime.compile(
             "exports",
             """
-      local total = 0
-      return {
-          add = function(left: number, right: number): number
-              return left + right
-          end,
-          accumulate = function(value: number): number
-              total += value
-              return total
-          end,
-          echo = function(value: string): string
-              return value
-          end,
-      }
-      """);
+            local total = 0
+            return {
+                add = function(left: number, right: number): number
+                    return left + right
+                end,
+                accumulate = function(value: number): number
+                    total += value
+                    return total
+                end,
+                echo = function(value: string): string
+                    return value
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -292,20 +290,20 @@ class LuauRuntimeTest {
         runtime.compile(
             "structured-values",
             """
-      --!nocheck
-      return {
-          echo = function(value)
-              return value
-          end,
-          create = function()
-              return {
-                  ["键😀"] = "值",
-                  items = {1, true, ""},
-                  payload = buffer.fromstring("\\0Luau"),
-              }
-          end,
-      }
-      """);
+            --!nocheck
+            return {
+                echo = function(value)
+                    return value
+                end,
+                create = function()
+                    return {
+                        ["键😀"] = "值",
+                        items = {1, true, ""},
+                        payload = buffer.fromstring("\\0Luau"),
+                    }
+                end,
+            }
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     LuauValue input =
@@ -359,31 +357,31 @@ class LuauRuntimeTest {
     assertStructuredValueFailure(
         "invalid-key",
         """
-      --!nocheck
-      return {run = function()
-          return {[true] = "not allowed"}
-      end}
-      """,
+        --!nocheck
+        return {run = function()
+            return {[true] = "not allowed"}
+        end}
+        """,
         "key type");
     assertStructuredValueFailure(
         "cyclic-table",
         """
-      --!nocheck
-      return {run = function()
-          local value = {}
-          value.self = value
-          return value
-      end}
-      """,
+        --!nocheck
+        return {run = function()
+            local value = {}
+            value.self = value
+            return value
+        end}
+        """,
         "Cyclic");
     assertStructuredValueFailure(
         "invalid-utf8",
         """
-      --!nocheck
-      return {run = function()
-          return string.char(255)
-      end}
-      """,
+        --!nocheck
+        return {run = function()
+            return string.char(255)
+        end}
+        """,
         "UTF-8");
   }
 
@@ -393,18 +391,18 @@ class LuauRuntimeTest {
         runtime.compile(
             "deep-value",
             """
-      --!nocheck
-      return {run = function()
-          local root = {}
-          local current = root
-          for _ = 1, 34 do
-              local child = {}
-              current.child = child
-              current = child
-          end
-          return root
-      end}
-      """);
+            --!nocheck
+            return {run = function()
+                local root = {}
+                local current = root
+                for _ = 1, 34 do
+                    local child = {}
+                    current.child = child
+                    current = child
+                end
+                return root
+            end}
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -425,11 +423,11 @@ class LuauRuntimeTest {
         runtime.compile(
             "large-return-value",
             """
-      --!nocheck
-      return {run = function()
-          return buffer.create(1024 * 1024 + 1)
-      end}
-      """);
+            --!nocheck
+            return {run = function()
+                return buffer.create(1024 * 1024 + 1)
+            end}
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -450,9 +448,9 @@ class LuauRuntimeTest {
         runtime.compile(
             "input-limit",
             """
-      --!nocheck
-      return {echo = function(value) return value end}
-      """);
+            --!nocheck
+            return {echo = function(value) return value end}
+            """);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();

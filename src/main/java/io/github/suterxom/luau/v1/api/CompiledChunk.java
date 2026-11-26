@@ -62,11 +62,10 @@ public final class CompiledChunk implements AutoCloseable {
     this.hostModules = List.copyOf(Objects.requireNonNull(hostModules, "hostModules"));
     LinkedHashSet<String> hostNames = new LinkedHashSet<>();
     LinkedHashMap<String, String> hostVersions = new LinkedHashMap<>();
-    this.hostModules.forEach(
-        module -> {
-          hostNames.add(module.name());
-          hostVersions.put(module.name(), module.interfaceVersion());
-        });
+    this.hostModules.forEach(module -> {
+      hostNames.add(module.name());
+      hostVersions.put(module.name(), module.interfaceVersion());
+    });
     this.hostModuleNames = Set.copyOf(hostNames);
     this.hostModuleVersions = Map.copyOf(hostVersions);
   }

@@ -29,32 +29,32 @@ class LuauModulesTest {
             Map.of(
                 "app/main",
                 """
-      local counter = require("lib/counter")
-      local service = require("app/service")
-      return {
-          sameModule = function(): boolean
-              return counter == service.counter
-          end,
-          next = function(): number
-              return service.counter.next()
-          end,
-      }
-      """,
+                local counter = require("lib/counter")
+                local service = require("app/service")
+                return {
+                    sameModule = function(): boolean
+                        return counter == service.counter
+                    end,
+                    next = function(): number
+                        return service.counter.next()
+                    end,
+                }
+                """,
                 "app/service",
                 """
-                                                           local counter = require("lib/counter")
-                                                           return {counter = counter}
-                                                           """,
+                local counter = require("lib/counter")
+                return {counter = counter}
+                """,
                 "lib/counter",
                 """
-                                                           local value = 0
-                                                           return {
-                                                               next = function(): number
-                                                                   value += 1
-                                                                   return value
-                                                               end,
-                                                           }
-                                                           """));
+                local value = 0
+                return {
+                    next = function(): number
+                        value += 1
+                        return value
+                    end,
+                }
+                """));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -99,18 +99,17 @@ class LuauModulesTest {
                 "return require(\"broken\")",
                 "broken",
                 """
-      local value: number = "wrong"
-      return value
-      """));
+                local value: number = "wrong"
+                return value
+                """));
 
     assertFalse(compilation.successful());
     assertTrue(
         compilation.diagnostics().stream()
-            .anyMatch(
-                diagnostic ->
-                    diagnostic.stage() == CompilationDiagnostic.Stage.TYPE
-                        && diagnostic.moduleName().equals("broken")
-                        && diagnostic.message().contains("number")));
+            .anyMatch(diagnostic ->
+                diagnostic.stage() == CompilationDiagnostic.Stage.TYPE
+                    && diagnostic.moduleName().equals("broken")
+                    && diagnostic.message().contains("number")));
   }
 
   @Test
@@ -137,9 +136,9 @@ class LuauModulesTest {
             Map.of(
                 "main",
                 """
-      local name = string.lower("NOT-REGISTERED")
-      return require(name) :: any
-      """));
+                local name = string.lower("NOT-REGISTERED")
+                return require(name) :: any
+                """));
     assertTrue(missing.successful(), () -> missing.diagnostics().toString());
     try (CompiledChunk chunk = missing.chunk().orElseThrow()) {
       var failure = assertInstanceOf(ExecutionResult.RuntimeFailed.class, chunk.execute());
@@ -152,14 +151,14 @@ class LuauModulesTest {
             Map.of(
                 "A",
                 """
-      local name = string.upper("b")
-      return require(name) :: any
-      """,
+                local name = string.upper("b")
+                return require(name) :: any
+                """,
                 "B",
                 """
-                                               local name = string.upper("a")
-                                               return require(name) :: any
-                                               """));
+                local name = string.upper("a")
+                return require(name) :: any
+                """));
     assertTrue(cyclic.successful(), () -> cyclic.diagnostics().toString());
     try (CompiledChunk chunk = cyclic.chunk().orElseThrow()) {
       var failure = assertInstanceOf(ExecutionResult.RuntimeFailed.class, chunk.execute());
@@ -197,12 +196,12 @@ class LuauModulesTest {
                 "return require(\"loop\")",
                 "loop",
                 """
-      local function wait(value: boolean): boolean
-          while not value do end
-          return true
-      end
-      return wait(false)
-      """));
+                local function wait(value: boolean): boolean
+                    while not value do end
+                    return true
+                end
+                return wait(false)
+                """));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {

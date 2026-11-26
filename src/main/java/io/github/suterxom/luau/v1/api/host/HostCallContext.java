@@ -49,14 +49,13 @@ public final class HostCallContext {
     if (bytes < 0) {
       throw new IllegalArgumentException("Host output byte count must not be negative");
     }
-    outputBytes.updateAndGet(
-        current -> {
-          try {
-            return Math.addExact(current, bytes);
-          } catch (ArithmeticException exception) {
-            throw new IllegalStateException("Host output byte count overflow", exception);
-          }
-        });
+    outputBytes.updateAndGet(current -> {
+      try {
+        return Math.addExact(current, bytes);
+      } catch (ArithmeticException exception) {
+        throw new IllegalStateException("Host output byte count overflow", exception);
+      }
+    });
   }
 
   /** Returns all host output bytes registered on this context so far. */

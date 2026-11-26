@@ -637,8 +637,8 @@ class ScriptDebuggerTest {
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
         ScriptInstance instance = chunk.createInstance()) {
       assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
-      Breakpoint breakpoint = instance.debugger().setBreakpoint("debug/terminate", 3);
-      assertEquals(3, breakpoint.resolvedLine());
+      Breakpoint breakpoint = instance.debugger().setBreakpoint("debug/terminate", 4);
+      assertEquals(4, breakpoint.resolvedLine());
       assertInstanceOf(ExecutionResult.Paused.class, instance.invokeExport("run", List.of()));
       assertThrows(IllegalStateException.class, instance::reset);
 

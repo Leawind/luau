@@ -50,8 +50,8 @@ class LuauRuntimeTest {
   void reportsMatchingRuntimeInformation() {
     RuntimeInfo info = runtime.info();
 
-    assertEquals("0.722", info.luauVersion());
-    assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
+    assertEquals("0.748", info.luauVersion());
+    assertEquals("3d91c9d5c280c95bfc4be63aac46012cf861d394", info.luauCommit());
     assertEquals(11, info.jniAbiVersion());
     // The expected version comes from the packaged manifest instead of a literal: a hard coded
     // one breaks on every version bump and says nothing about the built native library.
@@ -137,11 +137,17 @@ class LuauRuntimeTest {
 
   @Test
   void reportsUnknownSourceRangeForCompileStageFailures() {
+    // Every local is used and initialized from a call the compiler cannot fold, so the chunk really
+    // needs more registers than the 200 the compiler allows; unused locals are eliminated instead.
     StringBuilder source = new StringBuilder();
     for (int index = 0; index < 201; ++index) {
-      source.append("local value").append(index).append(" = ").append(index).append('\n');
+      source.append("local value").append(index).append(" = os.clock()\n");
     }
-    source.append("return value200\n");
+    source.append("return {");
+    for (int index = 0; index < 201; ++index) {
+      source.append(index == 0 ? "" : ", ").append("value").append(index);
+    }
+    source.append("}\n");
 
     var compilation = runtime.compile("compile-limit", source.toString());
 

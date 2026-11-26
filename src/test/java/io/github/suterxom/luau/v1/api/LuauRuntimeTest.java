@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suterxom.luau.internal.loader.NativePlatform;
+import io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic;
+import io.github.suterxom.luau.v1.api.compile.SourceRange;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.runtime.InstanceConfig;
@@ -32,7 +34,7 @@ class LuauRuntimeTest {
 
     assertEquals("0.722", info.luauVersion());
     assertEquals("32d52d1b2ceef46fc25d87094a2d7f201c3ea5b8", info.luauCommit());
-    assertEquals(10, info.jniAbiVersion());
+    assertEquals(11, info.jniAbiVersion());
     assertTrue(info.runtimeVersion().startsWith("0.1.0"));
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
@@ -73,9 +75,60 @@ class LuauRuntimeTest {
             .allMatch(diagnostic -> diagnostic.moduleName().equals("broken")));
     assertTrue(
         compilation.diagnostics().stream()
-            .allMatch(diagnostic ->
-                diagnostic.stage()
-                    == io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic.Stage.PARSE));
+            .allMatch(diagnostic -> diagnostic.stage() == CompilationDiagnostic.Stage.PARSE));
+  }
+
+  @Test
+  void reportsStructuredSourceRangeForTypeErrors() {
+    var compilation =
+        runtime.compile(
+            "typed-location",
+            """
+            local value: number = 1
+            local text: string = "wrong"
+            local wrong: number = text
+            return wrong
+            """);
+
+    assertFalse(compilation.successful());
+    CompilationDiagnostic diagnostic = compilation.diagnostics().get(0);
+    assertEquals(CompilationDiagnostic.Stage.TYPE, diagnostic.stage());
+    assertEquals(3, diagnostic.sourceRange().startLine());
+    assertEquals(1, diagnostic.sourceRange().startColumn());
+    assertEquals(3, diagnostic.sourceRange().endLine());
+    assertEquals(27, diagnostic.sourceRange().endColumn());
+  }
+
+  @Test
+  void diagnosticMessagesDoNotEmbedSourceLocations() {
+    var compilation =
+        runtime.compile(
+            "typed-message",
+            """
+            local count: number = "not a number"
+            return count
+            """);
+
+    assertFalse(compilation.successful());
+    CompilationDiagnostic diagnostic = compilation.diagnostics().get(0);
+    assertFalse(diagnostic.message().matches("(?s)^\\d+:\\d+: .*"), diagnostic::message);
+    assertEquals(1, diagnostic.sourceRange().startLine());
+  }
+
+  @Test
+  void reportsUnknownSourceRangeForCompileStageFailures() {
+    StringBuilder source = new StringBuilder();
+    for (int index = 0; index < 201; ++index) {
+      source.append("local value").append(index).append(" = ").append(index).append('\n');
+    }
+    source.append("return value200\n");
+
+    var compilation = runtime.compile("compile-limit", source.toString());
+
+    assertFalse(compilation.successful());
+    CompilationDiagnostic diagnostic = compilation.diagnostics().get(0);
+    assertEquals(CompilationDiagnostic.Stage.COMPILE, diagnostic.stage());
+    assertEquals(SourceRange.UNKNOWN, diagnostic.sourceRange());
   }
 
   @Test
@@ -89,9 +142,7 @@ class LuauRuntimeTest {
             """);
 
     assertFalse(compilation.successful());
-    assertEquals(
-        io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic.Stage.TYPE,
-        compilation.diagnostics().get(0).stage());
+    assertEquals(CompilationDiagnostic.Stage.TYPE, compilation.diagnostics().get(0).stage());
     assertTrue(compilation.diagnostics().get(0).message().contains("string"));
     assertTrue(compilation.diagnostics().get(0).message().contains("number"));
   }

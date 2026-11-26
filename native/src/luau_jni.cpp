@@ -545,7 +545,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (symbols.compilationDiagnostic == nullptr)
         return false;
     const JniMethod compilationDiagnosticMethods[] = {
-        {"<init>", "(I[B[B)V", &symbols.compilationDiagnosticConstructor},
+        {"<init>", "(I[B[BIIII)V", &symbols.compilationDiagnosticConstructor},
     };
     if (!resolveMethods(
             env,
@@ -2703,6 +2703,10 @@ jobjectArray typecheckImpl(
         int stage;
         std::string moduleName;
         std::string message;
+        int startLine = 0;
+        int startColumn = 0;
+        int endLine = 0;
+        int endColumn = 0;
     };
     std::vector<Diagnostic> diagnostics;
     std::unordered_set<std::string> seenDiagnostics;
@@ -2725,16 +2729,32 @@ jobjectArray typecheckImpl(
                 Luau::get<Luau::SyntaxError>(error) == nullptr ? 1 : 0;
             const std::string moduleName =
                 error.moduleName.empty() ? checkedName : error.moduleName;
-            const std::string message =
-                std::to_string(location.begin.line + 1) + ":" +
-                std::to_string(location.begin.column + 1) + ": " +
-                Luau::toString(
-                    error,
-                    Luau::TypeErrorToStringOptions{&fileResolver});
+            const std::string message = Luau::toString(
+                error,
+                Luau::TypeErrorToStringOptions{&fileResolver});
+            // Luau locations are zero-based; zero means unknown in the Java API.
+            const int startLine =
+                static_cast<int>(location.begin.line + 1);
+            const int startColumn =
+                static_cast<int>(location.begin.column + 1);
+            const int endLine = static_cast<int>(location.end.line + 1);
+            const int endColumn =
+                static_cast<int>(location.end.column + 1);
             const std::string key =
-                std::to_string(stage) + "\n" + moduleName + "\n" + message;
+                std::to_string(stage) + "\n" + moduleName + "\n" +
+                std::to_string(startLine) + ":" +
+                std::to_string(startColumn) + "-" +
+                std::to_string(endLine) + ":" +
+                std::to_string(endColumn) + "\n" + message;
             if (seenDiagnostics.insert(key).second)
-                diagnostics.push_back({stage, moduleName, message});
+                diagnostics.push_back(
+                    {stage,
+                     moduleName,
+                     message,
+                     startLine,
+                     startColumn,
+                     endLine,
+                     endColumn});
         }
         for (const Luau::ModuleName& timedOutModule : checkResult.timeoutHits)
         {
@@ -2777,7 +2797,11 @@ jobjectArray typecheckImpl(
             symbols->compilationDiagnosticConstructor,
             static_cast<jint>(diagnostics[index].stage),
             moduleName,
-            message);
+            message,
+            static_cast<jint>(diagnostics[index].startLine),
+            static_cast<jint>(diagnostics[index].startColumn),
+            static_cast<jint>(diagnostics[index].endLine),
+            static_cast<jint>(diagnostics[index].endColumn));
         env->DeleteLocalRef(moduleName);
         env->DeleteLocalRef(message);
         if (diagnostic == nullptr)

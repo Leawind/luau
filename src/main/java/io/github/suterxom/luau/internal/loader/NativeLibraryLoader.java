@@ -80,23 +80,27 @@ public final class NativeLibraryLoader {
     try {
       Files.createDirectories(extractionDirectory);
       try (FileChannel channel =
-              FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-          FileLock ignored = channel.lock()) {
-        if (!isExpectedFile(extractedLibrary, expectedSha256)) {
-          Path temporaryFile =
-              extractionDirectory.resolve(fileName + ".tmp-" + ProcessHandle.current().pid());
-          Files.write(temporaryFile, libraryBytes);
-          try {
-            Files.move(
-                temporaryFile,
-                extractedLibrary,
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING);
-          } catch (java.nio.file.AtomicMoveNotSupportedException ignoredAtomicMove) {
-            Files.move(temporaryFile, extractedLibrary, StandardCopyOption.REPLACE_EXISTING);
-          } finally {
-            Files.deleteIfExists(temporaryFile);
+          FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+        FileLock lock = channel.lock();
+        try {
+          if (!isExpectedFile(extractedLibrary, expectedSha256)) {
+            Path temporaryFile =
+                extractionDirectory.resolve(fileName + ".tmp-" + ProcessHandle.current().pid());
+            Files.write(temporaryFile, libraryBytes);
+            try {
+              Files.move(
+                  temporaryFile,
+                  extractedLibrary,
+                  StandardCopyOption.ATOMIC_MOVE,
+                  StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignoredAtomicMove) {
+              Files.move(temporaryFile, extractedLibrary, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+              Files.deleteIfExists(temporaryFile);
+            }
           }
+        } finally {
+          lock.release();
         }
       }
     } catch (IOException exception) {

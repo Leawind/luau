@@ -25,10 +25,21 @@ val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
 val glibcFloor = providers.gradleProperty("luau.glibcFloor").get()
 
 /**
- * Sanitizer group the native library is built with, for example `undefined`. Empty builds the
- * release library; the CI passes `-PnativeSanitizers=undefined` to test an instrumented one.
+ * Sanitizer group the native library is built with, for example `undefined` or `address`. Empty
+ * builds the release library; the CI passes `-PnativeSanitizers=undefined` to test an
+ * instrumented one. The address group needs [nativeSanitizerRuntime] as well and is a local tool
+ * for now: the suite reports a pre-existing heap-use-after-free inside the vendored Luau teardown
+ * with it, so no CI job runs that group yet.
  */
 val nativeSanitizers = providers.gradleProperty("nativeSanitizers").getOrElse("")
+
+/**
+ * Shared sanitizer runtime the test JVM preloads, for example the `libasan.so.8` of the toolchain
+ * that built the library. The address group only sees the whole process when the runtime is
+ * initialized before every other library, so it has to be named here; the other groups do not
+ * use it.
+ */
+val nativeSanitizerRuntime = providers.gradleProperty("nativeSanitizerRuntime").getOrElse("")
 
 /**
  * The single source of truth for the platforms a release ships. The universal JAR and the tests
@@ -121,6 +132,29 @@ if (nativeSanitizers.isNotEmpty() && hostOs == "windows") {
             "-fsanitize=$nativeSanitizers. Run the instrumented tests on Linux.",
     )
 }
+
+/** Sanitizer groups of [nativeSanitizers], which GCC also accepts as a comma separated list. */
+val sanitizerGroups = nativeSanitizers.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+/**
+ * Whether the test JVM has to preload the sanitizer runtime. AddressSanitizer only instruments
+ * the whole process, heap allocations included, when its runtime is the first library that gets
+ * initialized, and the JVM loads the native library long after that point.
+ */
+val preloadsSanitizerRuntime = "address" in sanitizerGroups
+
+// A runtime that is missing or that the loader refuses makes the process start without the
+// sanitizer, which would turn the instrumented suite into a passing but meaningless run.
+if (preloadsSanitizerRuntime) {
+    require(nativeSanitizerRuntime.isNotEmpty()) {
+        "-PnativeSanitizers=address needs -PnativeSanitizerRuntime=<path to libasan.so>; the test " +
+            "JVM preloads that runtime so that the sanitizer covers the whole process."
+    }
+    require(File(nativeSanitizerRuntime).isFile) {
+        "-PnativeSanitizerRuntime=$nativeSanitizerRuntime is not a file"
+    }
+}
+
 val hostPlatform = "$hostOs-$hostArch"
 val hostNativeName = nativeLibraryName(hostOs)
 val nativeBuildDirectory = layout.buildDirectory.dir("native/cmake")
@@ -634,7 +668,20 @@ tasks.test {
         // A sanitizer reports on stderr and aborts the forked test JVM, so the per-test reports
         // never get written: the streams have to reach the build log to be seen at all.
         testLogging.showStandardStreams = true
-        environment("UBSAN_OPTIONS", "print_stacktrace=1")
+        if (preloadsSanitizerRuntime) {
+            // The runtime has to be the first library of the process, which only preloading can
+            // arrange. The JVM manages its own heap and takes SEGV itself for null checks and
+            // safepoint polling, so leak checking has to go and the signal handlers have to stay
+            // with the JVM.
+            environment(
+                "ASAN_OPTIONS",
+                "detect_leaks=0:handle_segv=0:allow_user_segv_handler=1",
+            )
+            environment("LD_PRELOAD", nativeSanitizerRuntime)
+            inputs.property("nativeSanitizerRuntime", nativeSanitizerRuntime)
+        } else {
+            environment("UBSAN_OPTIONS", "print_stacktrace=1")
+        }
     }
 }
 

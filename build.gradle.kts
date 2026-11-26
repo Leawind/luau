@@ -90,6 +90,41 @@ val hostNativeName = nativeLibraryName(hostOs)
 val nativeBuildDirectory = layout.buildDirectory.dir("native/cmake")
 val nativeOutputDirectory = nativeBuildDirectory.map { it.dir("out") }
 val nativeLibrary = nativeOutputDirectory.map { it.file(hostNativeName) }
+val cmakeGenerator = if (hostOs == "windows") "Ninja" else null
+
+fun captureProcessOutput(command: List<String>): String {
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    val output = process.inputStream.bufferedReader().readText()
+    val exitCode = process.waitFor()
+    check(exitCode == 0) { "Command failed with exit code $exitCode: ${command.joinToString(" ")}" }
+    return output.trim()
+}
+
+/** Imports the MSVC toolchain environment so the native build does not require a developer shell. */
+fun msvcEnvironment(): Map<String, String> {
+    check(hostOs == "windows") { "MSVC environment is only available on Windows" }
+    val vswhere = File(
+        System.getenv("ProgramFiles(x86)") ?: "C:\\Program Files (x86)",
+        "Microsoft Visual Studio/Installer/vswhere.exe",
+    )
+    check(vswhere.isFile) {
+        "Building the native library on Windows requires Visual Studio Build Tools with the C++ workload"
+    }
+    val installationPath = captureProcessOutput(
+        listOf(vswhere.absolutePath, "-latest", "-products", "*", "-property", "installationPath"),
+    )
+    check(installationPath.isNotBlank()) {
+        "Building the native library on Windows requires Visual Studio Build Tools with the C++ workload"
+    }
+    val vcvars = File(installationPath, "VC/Auxiliary/Build/vcvars64.bat")
+    check(vcvars.isFile) { "Missing MSVC environment script: $vcvars" }
+    return captureProcessOutput(listOf("cmd", "/c", "call \"${vcvars.absolutePath}\" >nul && set"))
+        .lineSequence()
+        .filter { it.isNotEmpty() && !it.startsWith("=") && it.contains('=') }
+        .associate { it.substringBefore('=') to it.substringAfter('=') }
+}
+
+val msvcEnv: Map<String, String> by lazy { if (hostOs == "windows") msvcEnvironment() else emptyMap() }
 
 val configureNative by tasks.registering(Exec::class) {
     group = "native"
@@ -102,24 +137,42 @@ val configureNative by tasks.registering(Exec::class) {
     inputs.property("luauVersion", luauVersion)
     inputs.property("luauCommit", luauCommit)
     inputs.property("jniAbiVersion", jniAbiVersion)
+    inputs.property("cmakeGenerator", cmakeGenerator ?: "cmake-default")
     outputs.file(nativeBuildDirectory.map { it.file("CMakeCache.txt") })
 
     doFirst {
-        nativeBuildDirectory.get().asFile.mkdirs()
+        val buildDirectory = nativeBuildDirectory.get().asFile
+        val cache = buildDirectory.resolve("CMakeCache.txt")
+        if (cache.isFile && cmakeGenerator != null) {
+            val cachedGenerator = cache.readLines()
+                .firstOrNull { it.startsWith("CMAKE_GENERATOR:INTERNAL=") }
+                ?.substringAfter('=')
+            if (cachedGenerator != cmakeGenerator) buildDirectory.deleteRecursively()
+        }
+        buildDirectory.mkdirs()
+        if (cmakeGenerator != null) environment(msvcEnv)
     }
 
     commandLine(
-        "cmake",
-        "-S", layout.projectDirectory.dir("native").asFile.absolutePath,
-        "-B", nativeBuildDirectory.get().asFile.absolutePath,
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DLUAU_BUILD_CLI=OFF",
-        "-DLUAU_BUILD_TESTS=OFF",
-        "-DLUAU_BUILD_WEB=OFF",
-        "-DLUAU_RUNTIME_VERSION=$version",
-        "-DLUAU_UPSTREAM_VERSION=$luauVersion",
-        "-DLUAU_UPSTREAM_COMMIT=$luauCommit",
-        "-DLUAU_JNI_ABI_VERSION=$jniAbiVersion",
+        buildList {
+            add("cmake")
+            add("-S")
+            add(layout.projectDirectory.dir("native").asFile.absolutePath)
+            add("-B")
+            add(nativeBuildDirectory.get().asFile.absolutePath)
+            if (cmakeGenerator != null) {
+                add("-G")
+                add(cmakeGenerator)
+            }
+            add("-DCMAKE_BUILD_TYPE=Release")
+            add("-DLUAU_BUILD_CLI=OFF")
+            add("-DLUAU_BUILD_TESTS=OFF")
+            add("-DLUAU_BUILD_WEB=OFF")
+            add("-DLUAU_RUNTIME_VERSION=$version")
+            add("-DLUAU_UPSTREAM_VERSION=$luauVersion")
+            add("-DLUAU_UPSTREAM_COMMIT=$luauCommit")
+            add("-DLUAU_JNI_ABI_VERSION=$jniAbiVersion")
+        },
     )
     environment("JAVA_HOME", System.getProperty("java.home"))
 }
@@ -132,6 +185,10 @@ val buildNative by tasks.registering(Exec::class) {
     inputs.dir("native/src")
     inputs.dir("native/luau")
     outputs.file(nativeLibrary)
+
+    doFirst {
+        if (cmakeGenerator != null) environment(msvcEnv)
+    }
 
     commandLine(
         "cmake",
@@ -218,6 +275,56 @@ tasks.processResources {
     from("native/luau/lua_LICENSE.txt") {
         into("META-INF/licenses/luau")
     }
+}
+
+/** Splits a TOML table header into its dotted key path, honouring quoted keys as single segments. */
+fun tomlKeyPath(header: String): List<String> {
+    val segments = mutableListOf<String>()
+    val current = StringBuilder()
+    var quoted = false
+    for(character in header){
+        when{
+            character == '"' -> quoted = !quoted
+            character == '.' && !quoted -> {
+                segments += current.toString().trim()
+                current.clear()
+            }
+            else -> current.append(character)
+        }
+    }
+    segments += current.toString().trim()
+    return segments
+}
+
+val validateModMetadata by tasks.registering {
+    group = "verification"
+    description = "Verifies that the packaged loader metadata declares the mod id and the Minecraft dependency."
+
+    val resourcesDirectory = tasks.processResources.map { it.destinationDir }
+    inputs.dir(resourcesDirectory)
+
+    doLast {
+        val root = resourcesDirectory.get()
+        val tableHeaders = Regex("""^\[\[(.+)]]$""", RegexOption.MULTILINE)
+        for(metadataFile in listOf("META-INF/mods.toml", "META-INF/neoforge.mods.toml")){
+            val text = root.resolve(metadataFile).readText()
+            val keyPaths = tableHeaders.findAll(text).map { tomlKeyPath(it.groupValues[1]) }.toList()
+            check(keyPaths.contains(listOf("dependencies", modId))) {
+                "$metadataFile must declare its dependencies as [[dependencies.$modId]]. " +
+                    "A quoted header is a single literal key that loaders never look up; found $keyPaths"
+            }
+        }
+
+        val fabricMetadata = root.resolve("fabric.mod.json").readText()
+        val parsed = groovy.json.JsonSlurper().parseText(fabricMetadata) as Map<*, *>
+        check(parsed["id"] == modId) { "fabric.mod.json must declare the mod id $modId" }
+        val depends = parsed["depends"] as? Map<*, *>
+        check(depends?.get("minecraft") != null) { "fabric.mod.json must declare the Minecraft dependency" }
+    }
+}
+
+tasks.check {
+    dependsOn(validateModMetadata)
 }
 
 tasks.withType<JavaCompile>().configureEach {

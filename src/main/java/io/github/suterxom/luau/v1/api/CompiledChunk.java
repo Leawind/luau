@@ -30,7 +30,6 @@ import java.util.Set;
 public final class CompiledChunk implements AutoCloseable {
   private static final long DEFAULT_MAX_MEMORY_BYTES = 64L * 1024 * 1024;
 
-  private final LuauRuntime runtime;
   private final String chunkName;
   private final byte[] rootModuleNameUtf8;
   private final byte[][] moduleNamesUtf8;
@@ -41,12 +40,10 @@ public final class CompiledChunk implements AutoCloseable {
   private byte[][] bytecodes;
 
   CompiledChunk(
-      LuauRuntime runtime,
       String chunkName,
       byte[][] moduleNamesUtf8,
       byte[][] bytecodes,
       List<HostModule> hostModules) {
-    this.runtime = Objects.requireNonNull(runtime, "runtime");
     this.chunkName = Objects.requireNonNull(chunkName, "chunkName");
     this.rootModuleNameUtf8 = chunkName.getBytes(StandardCharsets.UTF_8);
     this.moduleNamesUtf8 = deepClone(moduleNamesUtf8, "moduleNamesUtf8");
@@ -214,10 +211,6 @@ public final class CompiledChunk implements AutoCloseable {
         new SourceLocation(
             new String(frame.moduleNameUtf8(), StandardCharsets.UTF_8), frame.line()),
         new String(frame.functionNameUtf8(), StandardCharsets.UTF_8));
-  }
-
-  LuauRuntime runtime() {
-    return runtime;
   }
 
   @Override

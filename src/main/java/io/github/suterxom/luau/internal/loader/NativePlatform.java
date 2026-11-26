@@ -3,40 +3,54 @@ package io.github.suterxom.luau.internal.loader;
 import java.util.Locale;
 
 public record NativePlatform(String id, String libraryFileName) {
-  public static NativePlatform current() {
-    String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
-    String os =
-        osName.contains("linux")
-            ? "linux"
-            : osName.contains("windows")
-                ? "windows"
-                : osName.contains("mac") || osName.contains("darwin") ? "macos" : null;
-    if (os == null) {
-      throw new UnsupportedPlatformException(
-          "Unsupported operating system: " + System.getProperty("os.name"));
-    }
+  private static final String LINUX = "linux";
+  private static final String WINDOWS = "windows";
+  private static final String MACOS = "macos";
+  private static final String X86_64 = "x86_64";
+  private static final String AARCH64 = "aarch64";
 
-    String rawArch = System.getProperty("os.arch").toLowerCase(Locale.ROOT);
-    String arch =
-        switch (rawArch) {
-          case "amd64", "x86_64" -> "x86_64";
-          case "aarch64", "arm64" -> "aarch64";
-          default -> null;
-        };
-    if (arch == null) {
-      throw new UnsupportedPlatformException(
-          "Unsupported architecture: " + System.getProperty("os.arch"));
-    }
-    if (os.equals("windows") && arch.equals("aarch64")) {
+  public static NativePlatform current() {
+    String os = detectOperatingSystem();
+    String architecture = detectArchitecture();
+    if (WINDOWS.equals(os) && AARCH64.equals(architecture)) {
       throw new UnsupportedPlatformException("Windows ARM64 is not currently supported");
     }
+    return new NativePlatform(os + "-" + architecture, libraryFileName(os));
+  }
 
-    String libraryFileName =
-        switch (os) {
-          case "windows" -> "luau_jni.dll";
-          case "macos" -> "libluau_jni.dylib";
-          default -> "libluau_jni.so";
-        };
-    return new NativePlatform(os + "-" + arch, libraryFileName);
+  private static String detectOperatingSystem() {
+    String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+    if (osName.contains(LINUX)) {
+      return LINUX;
+    }
+    if (osName.contains(WINDOWS)) {
+      return WINDOWS;
+    }
+    if (osName.contains("mac") || osName.contains("darwin")) {
+      return MACOS;
+    }
+    throw new UnsupportedPlatformException(
+        "Unsupported operating system: " + System.getProperty("os.name"));
+  }
+
+  private static String detectArchitecture() {
+    String rawArch = System.getProperty("os.arch").toLowerCase(Locale.ROOT);
+    switch (rawArch) {
+      case "amd64", "x86_64":
+        return X86_64;
+      case "aarch64", "arm64":
+        return AARCH64;
+      default:
+        throw new UnsupportedPlatformException(
+            "Unsupported architecture: " + System.getProperty("os.arch"));
+    }
+  }
+
+  private static String libraryFileName(String os) {
+    return switch (os) {
+      case WINDOWS -> "luau_jni.dll";
+      case MACOS -> "libluau_jni.dylib";
+      default -> "libluau_jni.so";
+    };
   }
 }

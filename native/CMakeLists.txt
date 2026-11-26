@@ -89,7 +89,14 @@ if(APPLE)
     # the local symbols from the dylib as well.
     target_link_options(luau_jni PRIVATE -Wl,-x)
 elseif(NOT MSVC)
-    target_link_options(luau_jni PRIVATE -Wl,--exclude-libs,ALL -Wl,-s)
+    # The C++ runtime is linked statically so the library depends on the system C library
+    # only: a dynamically linked libstdc++ would pin the player's distribution version.
+    target_link_options(luau_jni PRIVATE
+        -static-libstdc++
+        -static-libgcc
+        -Wl,--exclude-libs,ALL
+        -Wl,-s
+    )
 endif()
 
 set_target_properties(luau_jni PROPERTIES

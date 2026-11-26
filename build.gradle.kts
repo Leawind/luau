@@ -22,6 +22,7 @@ val packFormat = providers.gradleProperty("mod.packFormat").get()
 val luauVersion = providers.gradleProperty("luau.version").get()
 val luauCommit = providers.gradleProperty("luau.commit").get()
 val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
+val glibcFloor = providers.gradleProperty("luau.glibcFloor").get()
 
 /**
  * The single source of truth for the platforms a release ships. The universal JAR and the tests
@@ -693,6 +694,92 @@ val universalJar by tasks.registering(Jar::class) {
     }
 }
 
+/** Reads a NUL-terminated string out of an ELF file image. */
+fun readNullTerminatedString(bytes: ByteArray, offset: Int): String {
+    val builder = StringBuilder()
+    var index = offset
+    while (index < bytes.size && bytes[index] != 0.toByte()) {
+        builder.append((bytes[index].toInt() and 0xFF).toChar())
+        ++index
+    }
+    return builder.toString()
+}
+
+/** Compares dotted numeric versions, treating missing components as zero. */
+fun compareVersions(left: String, right: String): Int {
+    val leftParts = left.split('.').map { it.toIntOrNull() ?: 0 }
+    val rightParts = right.split('.').map { it.toIntOrNull() ?: 0 }
+    for (index in 0 until maxOf(leftParts.size, rightParts.size)) {
+        val difference =
+            leftParts.getOrElse(index) { 0 }.compareTo(rightParts.getOrElse(index) { 0 })
+        if (difference != 0) return difference
+    }
+    return 0
+}
+
+/**
+ * Reads the versioned symbol requirements of a 64-bit little-endian ELF shared object, keyed by
+ * the library that provides them, for example libc.so.6 -> [GLIBC_2.2.5, GLIBC_2.28].
+ */
+fun elfVersionRequirements(bytes: ByteArray): Map<String, Set<String>> {
+    val magic = byteArrayOf(0x7F, 0x45, 0x4C, 0x46)
+    if (bytes.size < 64 || magic.indices.any { bytes[it] != magic[it] }) {
+        throw GradleException("The native library is not an ELF file")
+    }
+    check(bytes[4].toInt() == 2) { "The native library is not a 64-bit ELF file" }
+    check(bytes[5].toInt() == 1) { "The native library is not a little-endian ELF file" }
+
+    fun u16(offset: Int): Int =
+        (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+
+    fun u32(offset: Int): Long = u16(offset).toLong() or (u16(offset + 2).toLong() shl 16)
+
+    fun u64(offset: Int): Long = u32(offset) or (u32(offset + 4) shl 32)
+
+    val sectionHeaders = u64(0x28).toInt()
+    val sectionHeaderSize = u16(0x3A)
+    val sectionCount = u16(0x3C)
+    fun sectionAt(index: Int) = sectionHeaders + index * sectionHeaderSize
+
+    val sectionNames = u64(sectionAt(u16(0x3E)) + 24).toInt()
+    fun sectionName(index: Int): String =
+        readNullTerminatedString(bytes, sectionNames + u32(sectionAt(index)).toInt())
+    fun sectionOffset(index: Int) = u64(sectionAt(index) + 24).toInt()
+    fun sectionSize(index: Int) = u64(sectionAt(index) + 32).toInt()
+
+    var stringTable = -1
+    var versionNeeds = -1
+    var versionNeedsSize = 0
+    for (index in 0 until sectionCount) {
+        when (sectionName(index)) {
+            ".dynstr" -> stringTable = sectionOffset(index)
+            ".gnu.version_r" -> {
+                versionNeeds = sectionOffset(index)
+                versionNeedsSize = sectionSize(index)
+            }
+        }
+    }
+    if (versionNeeds < 0) return emptyMap()
+    check(stringTable >= 0) { "The native library has version needs but no .dynstr section" }
+
+    val requirements = mutableMapOf<String, MutableSet<String>>()
+    var entry = versionNeeds
+    while (entry < versionNeeds + versionNeedsSize) {
+        val count = u16(entry + 2)
+        val provider = readNullTerminatedString(bytes, stringTable + u32(entry + 4).toInt())
+        var auxiliary = entry + u32(entry + 8).toInt()
+        repeat(count) {
+            val version = readNullTerminatedString(bytes, stringTable + u32(auxiliary + 8).toInt())
+            requirements.getOrPut(provider) { mutableSetOf() }.add(version)
+            auxiliary += u32(auxiliary + 12).toInt()
+        }
+        val next = u32(entry + 12).toInt()
+        if (next == 0) break
+        entry += next
+    }
+    return requirements
+}
+
 val verifyUniversalJar by tasks.registering {
     group = "verification"
     description = "Verifies that the universal JAR contains every native and matching metadata."
@@ -729,6 +816,23 @@ val verifyUniversalJar by tasks.registering {
                 val bytes = jar.getInputStream(entry).use { it.readAllBytes() }
                 check(nativeManifest.getProperty("$platform.sha256") == sha256Bytes(bytes)) {
                     "Native SHA-256 mismatch for $platform"
+                }
+                if (platform.startsWith("linux-")) {
+                    val requirements = elfVersionRequirements(bytes)
+                    val cxxRuntimes = requirements.keys.filter {
+                        it.startsWith("libstdc++") || it.startsWith("libc++")
+                    }
+                    check(cxxRuntimes.isEmpty()) {
+                        "$platform/$fileName depends on ${cxxRuntimes.joinToString()}. Link the C++ " +
+                            "runtime statically so the library only needs the system C library."
+                    }
+                    val tooNew = requirements["libc.so.6"].orEmpty()
+                        .filter { compareVersions(it.removePrefix("GLIBC_"), glibcFloor) > 0 }
+                        .sorted()
+                    check(tooNew.isEmpty()) {
+                        "$platform/$fileName requires ${tooNew.joinToString()}, but the declared " +
+                            "glibc floor is $glibcFloor. Build that platform on an older baseline."
+                    }
                 }
             }
 

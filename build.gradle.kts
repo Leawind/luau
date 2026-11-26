@@ -5,6 +5,7 @@ import java.util.zip.ZipFile
 
 plugins {
     `java-library`
+    id("com.diffplug.spotless") version "8.12.0"
 }
 
 group = providers.gradleProperty("mod.group").get()
@@ -30,6 +31,13 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
     withSourcesJar()
+}
+
+spotless {
+    java {
+        target("src/**/*.java")
+        googleJavaFormat("1.28.0")
+    }
 }
 
 repositories {

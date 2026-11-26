@@ -23,6 +23,18 @@ val luauVersion = providers.gradleProperty("luau.version").get()
 val luauCommit = providers.gradleProperty("luau.commit").get()
 val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
 
+/**
+ * The single source of truth for the platforms a release ships. The universal JAR and the tests
+ * both derive from this list, so adding or dropping a platform only has to happen here.
+ */
+val releasePlatforms = listOf(
+    "windows-x86_64",
+    "linux-x86_64",
+    "linux-aarch64",
+    "macos-x86_64",
+    "macos-aarch64",
+)
+
 base {
     archivesName = modId
 }
@@ -343,8 +355,69 @@ val validateModMetadata by tasks.registering {
     }
 }
 
+val validateJniAbiVersion by tasks.registering {
+    group = "verification"
+    description = "Verifies that NativeBindings.EXPECTED_ABI_VERSION matches luau.jniAbiVersion."
+
+    val bindingsSource = layout.projectDirectory.file(
+        "src/main/java/io/github/suterxom/luau/internal/jni/NativeBindings.java",
+    )
+    inputs.file(bindingsSource)
+    inputs.property("jniAbiVersion", jniAbiVersion)
+
+    doLast {
+        val sourceFile = bindingsSource.asFile
+        val declared = Regex("""EXPECTED_ABI_VERSION\s*=\s*(\d+)\s*;""")
+            .find(sourceFile.readText())
+            ?.groupValues
+            ?.get(1)
+            ?: throw GradleException(
+                "Cannot read the EXPECTED_ABI_VERSION constant from $sourceFile. " +
+                    "The guard parses that declaration; keep it a plain integer constant.",
+            )
+        check(declared == jniAbiVersion) {
+            "NativeBindings.EXPECTED_ABI_VERSION is $declared but luau.jniAbiVersion is " +
+                "$jniAbiVersion. The loader rejects a native library built for a different ABI " +
+                "version, so update NativeBindings and gradle.properties together."
+        }
+    }
+}
+
+val validateLuauSubmoduleCommit by tasks.registering {
+    group = "verification"
+    description = "Verifies that luau.commit matches the native/luau submodule HEAD."
+
+    val submoduleDirectory = layout.projectDirectory.dir("native/luau")
+    inputs.property("luauCommit", luauCommit)
+
+    doLast {
+        val repositoryDirectory = submoduleDirectory.asFile
+        if (!repositoryDirectory.resolve(".git").exists()) {
+            throw GradleException(
+                "The native/luau submodule is not initialized, so luau.commit cannot be verified. " +
+                    "Run: git submodule update --init --recursive",
+            )
+        }
+        val head = try {
+            captureProcessOutput(
+                listOf("git", "-C", repositoryDirectory.absolutePath, "rev-parse", "HEAD"),
+            )
+        } catch (exception: Exception) {
+            throw GradleException(
+                "Cannot read the native/luau submodule HEAD. " +
+                    "Run: git submodule update --init --recursive",
+                exception,
+            )
+        }
+        check(head.equals(luauCommit, ignoreCase = true)) {
+            "luau.commit in gradle.properties is $luauCommit but native/luau is at $head. " +
+                "Check out the submodule commit that should ship, or update luau.commit."
+        }
+    }
+}
+
 tasks.check {
-    dependsOn(validateModMetadata)
+    dependsOn(validateModMetadata, validateJniAbiVersion, validateLuauSubmoduleCommit)
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -357,12 +430,30 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("-Werror")
 }
 
+val generatedPlatformResources = layout.buildDirectory.dir("generated/platform-resources")
+
+val generatePlatformManifest by tasks.registering {
+    group = "build"
+    description = "Writes the release platform list as a resource for the platform tests."
+
+    inputs.property("releasePlatforms", releasePlatforms)
+    outputs.dir(generatedPlatformResources)
+
+    doLast {
+        val manifest = generatedPlatformResources.get()
+            .file("META-INF/luau/platforms.properties")
+            .asFile
+        manifest.parentFile.mkdirs()
+        manifest.writeText("platforms=${releasePlatforms.joinToString(",")}\n")
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
 
     // The native library is loaded from the classpath, so it only has to reach the test runtime.
-    dependsOn(stageNativeResources)
-    classpath += files(generatedNativeResources)
+    dependsOn(stageNativeResources, generatePlatformManifest)
+    classpath += files(generatedNativeResources, generatedPlatformResources)
 }
 
 tasks.jar {
@@ -400,18 +491,11 @@ val stageUniversalNativeResources by tasks.registering {
                 "Pass -PprebuiltNativesDir=<directory> containing one subdirectory per platform.",
         )
         check(inputRoot.isDirectory) { "Prebuilt natives directory does not exist: $inputRoot" }
-        val expectedPlatforms = listOf(
-            "windows-x86_64",
-            "linux-x86_64",
-            "linux-aarch64",
-            "macos-x86_64",
-            "macos-aarch64",
-        )
         val outputRoot = universalNativeResources.get().asFile
         outputRoot.deleteRecursively()
 
-        val manifestLines = mutableListOf("platforms=${expectedPlatforms.joinToString(",")}")
-        for (platform in expectedPlatforms) {
+        val manifestLines = mutableListOf("platforms=${releasePlatforms.joinToString(",")}")
+        for (platform in releasePlatforms) {
             val platformDir = inputRoot.resolve(platform)
             val os = platform.substringBefore('-')
             val libraryName = nativeLibraryName(os)
@@ -468,14 +552,6 @@ val verifyUniversalJar by tasks.registering {
     inputs.file(archive)
 
     doLast {
-        val expectedPlatforms = listOf(
-            "windows-x86_64",
-            "linux-x86_64",
-            "linux-aarch64",
-            "macos-x86_64",
-            "macos-aarch64",
-        )
-
         ZipFile(archive.get().asFile).use { jar ->
             val manifestEntry = checkNotNull(
                 jar.getEntry("META-INF/luau/natives/manifest.properties"),
@@ -484,7 +560,7 @@ val verifyUniversalJar by tasks.registering {
                 jar.getInputStream(manifestEntry).use(::load)
             }
 
-            check(nativeManifest.getProperty("platforms") == expectedPlatforms.joinToString(",")) {
+            check(nativeManifest.getProperty("platforms") == releasePlatforms.joinToString(",")) {
                 "Universal JAR native platform list does not match the release platform list"
             }
             check(nativeManifest.getProperty("jniAbiVersion") == jniAbiVersion)
@@ -492,7 +568,7 @@ val verifyUniversalJar by tasks.registering {
             check(nativeManifest.getProperty("luauCommit") == luauCommit)
             check(nativeManifest.getProperty("runtimeVersion") == version.toString())
 
-            for (platform in expectedPlatforms) {
+            for (platform in releasePlatforms) {
                 val fileName = checkNotNull(nativeManifest.getProperty("$platform.filename"))
                 val entry = checkNotNull(
                     jar.getEntry("META-INF/luau/natives/$platform/$fileName"),

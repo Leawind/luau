@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.22)
 
 project(suterxom_luau_runtime LANGUAGES C CXX)
 
+# Statically link the C runtime so the library loads without the VC++ redistributable.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

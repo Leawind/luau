@@ -99,6 +99,51 @@ jobs:
           path: build/native/dist
           if-no-files-found: error
 
+  ubsan:
+    name: UndefinedBehaviorSanitizer
+    runs-on: ubuntu-24.04
+    # The instrumented library is built and tested only, never shipped, so it stays in the image
+    # the Linux natives come from and uses the same gcc-toolset.
+    container: quay.io/pypa/manylinux_2_28_x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The image carries only the 32-bit archive of the gcc-toolset sanitizer runtime; the
+      # 64-bit one, which the link needs, comes from this package.
+      - name: Install the gcc-toolset sanitizer runtime
+        shell: bash
+        run: dnf install -y --setopt=install_weak_deps=False gcc-toolset-14-libubsan-devel
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: true
+
+      - name: Test with UndefinedBehaviorSanitizer
+        shell: bash
+        run: |
+          source /opt/rh/gcc-toolset-14/enable
+          ./gradlew test -PnativeSanitizers=undefined --console=plain 2>&1 | tee ubsan.log
+
+      - name: Fail on an UndefinedBehaviorSanitizer report
+        if: always()
+        shell: bash
+        run: |
+          grep -n 'runtime error:' ubsan.log > hits.txt || true
+          find build/test-results -name '*.xml' -exec grep -n 'runtime error:' {} + >> hits.txt 2>/dev/null || true
+          if [ -s hits.txt ]; then
+            cat hits.txt
+            echo "::error::UndefinedBehaviorSanitizer reported undefined behavior"
+            exit 1
+          fi
+
   universal:
     name: Verify universal JAR
     needs: [build, build-linux]

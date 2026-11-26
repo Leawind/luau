@@ -1,5 +1,6 @@
 package io.github.suterxom.luau.internal.loader;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,7 +21,14 @@ class NativePlatformTest {
     assertTrue(
         releasePlatforms.contains(platform.id()),
         () -> platform.id() + " is missing from the release platforms " + releasePlatforms);
-    assertTrue(platform.libraryFileName().contains("luau_jni"));
+    String os = platform.id().substring(0, platform.id().indexOf('-'));
+    assertEquals(
+        switch (os) {
+          case "windows" -> "luau_jni.dll";
+          case "macos" -> "libluau_jni.dylib";
+          default -> "libluau_jni.so";
+        },
+        platform.libraryFileName());
   }
 
   /** Reads the release platform list that the build script generates. */

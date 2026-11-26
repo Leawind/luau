@@ -182,7 +182,6 @@ public final class LuauRuntime {
       }
       return CompilationResult.success(
           new CompiledChunk(
-              this,
               rootModuleName,
               moduleNamesUtf8,
               bytecodes,

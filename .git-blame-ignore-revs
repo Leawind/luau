@@ -1,0 +1,13 @@
+# Revisions listed here are skipped by `git blame`, so a repository-wide reformat
+# does not credit the reformat for every line it rewrapped.
+#
+# Enable it in a clone with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Append every future repository-wide reformat commit to this file.
+
+# style: format Java sources with google-java-format
+83aaee8488de8b5021a026007641fed48151f0ee
+
+# style: format non-code files with dprint
+b591c630956787be9797b1c1125999c4094d4331

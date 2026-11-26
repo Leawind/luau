@@ -12,6 +12,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Many mods share one process, so the library publishes its JNI entry points and nothing
+# else. JNIEXPORT asks for default visibility, every other symbol is hidden. The preset is
+# set before add_subdirectory so the statically linked Luau objects are hidden too, which is
+# what Mach-O needs: ld64 has no --exclude-libs.
+if(NOT MSVC)
+    set(CMAKE_C_VISIBILITY_PRESET hidden)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+    # Keep recorded source paths independent of where the checkout lives.
+    add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
+endif()
+
 set(LUAU_RUNTIME_VERSION "0.0.0-UNKNOWN" CACHE STRING "Luau Runtime Mod version")
 set(LUAU_UPSTREAM_VERSION "UNKNOWN" CACHE STRING "Upstream Luau version")
 set(LUAU_UPSTREAM_COMMIT "UNKNOWN" CACHE STRING "Upstream Luau commit")
@@ -47,14 +59,37 @@ target_link_libraries(luau_jni PRIVATE
     Luau.VM
 )
 
+# Upstream Luau is vendored code with its own warning policy, so its headers stay outside
+# the warning gate below and only src/luau_jni.cpp has to be warning free.
+set(LUAU_VENDOR_INCLUDE_DIRS
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Analysis/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Ast/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Bytecode/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Common/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Compiler/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/Config/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/luau/VM/include"
+)
+
 if(MSVC)
-    target_compile_options(luau_jni PRIVATE /W4)
+    foreach(luau_include_dir IN LISTS LUAU_VENDOR_INCLUDE_DIRS)
+        target_compile_options(luau_jni PRIVATE "/external:I${luau_include_dir}")
+    endforeach()
+    target_compile_options(luau_jni PRIVATE /W4 /WX /external:W0)
+    target_link_options(luau_jni PRIVATE /Brepro)
 else()
-    target_compile_options(luau_jni PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
+    foreach(luau_include_dir IN LISTS LUAU_VENDOR_INCLUDE_DIRS)
+        target_compile_options(luau_jni PRIVATE "SHELL:-isystem ${luau_include_dir}")
+    endforeach()
+    target_compile_options(luau_jni PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Werror)
 endif()
 
-if(NOT MSVC AND NOT APPLE)
-    target_link_options(luau_jni PRIVATE -Wl,--exclude-libs,ALL)
+if(APPLE)
+    # Hidden visibility empties the export table down to the JNI entry points; -Wl,-x drops
+    # the local symbols from the dylib as well.
+    target_link_options(luau_jni PRIVATE -Wl,-x)
+elseif(NOT MSVC)
+    target_link_options(luau_jni PRIVATE -Wl,--exclude-libs,ALL -Wl,-s)
 endif()
 
 set_target_properties(luau_jni PROPERTIES

@@ -173,9 +173,13 @@ class HostModulesTest {
 
       instance.reset();
       assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
-      var unexpected =
-          assertInstanceOf(
-              ExecutionResult.RuntimeFailed.class, instance.invokeExport("unexpected", List.of()));
+      var unexpectedResult = instance.invokeExport("unexpected", List.of());
+      // The message carries the actual result: this assertion once failed on a CI machine
+      // without saying which kind of result came back instead.
+      assertTrue(
+          unexpectedResult instanceof ExecutionResult.RuntimeFailed,
+          () -> "expected a runtime failure but got " + unexpectedResult);
+      var unexpected = (ExecutionResult.RuntimeFailed) unexpectedResult;
       assertTrue(unexpected.message().contains("failed internally"), unexpected::message);
       assertFalse(unexpected.message().contains("private implementation detail"));
     }

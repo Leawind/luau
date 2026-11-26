@@ -81,6 +81,15 @@ jobs:
         with:
           validate-wrappers: true
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check C++ formatting
+        run: |
+          pip install clang-format==23.1.5
+          ./gradlew clangFormatCheck -PclangFormatPath="$(command -v clang-format)"
+
       - uses: actions/download-artifact@v4
         with:
           path: prebuilt-natives

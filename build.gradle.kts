@@ -441,13 +441,15 @@ val validateClangFormatConfig by tasks.registering {
                     "restore it from native/luau/.clang-format.",
             )
         }
-        val sharedBytes = shared.readBytes()
-        val upstreamBytes = upstream.readBytes()
-        check(sharedBytes.contentEquals(upstreamBytes)) {
-            "native/.clang-format (${sharedBytes.size} bytes) differs from native/luau/.clang-format " +
-                "(${upstreamBytes.size} bytes). The JNI layer is compiled next to Luau sources laid out " +
-                "by the upstream style, so the two files stay identical: re-copy the upstream file, or " +
-                "change both together and say why."
+        // Line endings are compared normalised: the submodule is checked out with the line endings
+        // of the host, and a Windows checkout would otherwise fail this guard spuriously.
+        val sharedText = shared.readText().replace("\r\n", "\n").replace("\r", "\n")
+        val upstreamText = upstream.readText().replace("\r\n", "\n").replace("\r", "\n")
+        check(sharedText == upstreamText) {
+            "native/.clang-format (${sharedText.length} characters) differs from " +
+                "native/luau/.clang-format (${upstreamText.length} characters). The JNI layer is " +
+                "compiled next to Luau sources laid out by the upstream style, so the two files stay " +
+                "identical: re-copy the upstream file, or change both together and say why."
         }
     }
 }

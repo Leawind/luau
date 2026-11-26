@@ -5,7 +5,7 @@ public final class HostCallException extends Exception {
   public HostCallException(String message) {
     super(message);
   }
-  
+
   public HostCallException(String message, Throwable cause) {
     super(message, cause);
   }

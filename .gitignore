@@ -40,6 +40,14 @@ pnpm-lock.*
 .profileconfig.json
 *.jfr
 
+# JVM crash logs
+hs_err_pid*.log
+replay_pid*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
 # AI tools
 /.ai/
 .claude/

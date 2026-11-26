@@ -10,7 +10,7 @@ public record PauseInfo(Reason reason, SourceLocation location, List<StackFrame>
     Objects.requireNonNull(location, "location");
     stackFrames = List.copyOf(Objects.requireNonNull(stackFrames, "stackFrames"));
   }
-  
+
   public enum Reason {
     BREAKPOINT,
     REQUESTED,

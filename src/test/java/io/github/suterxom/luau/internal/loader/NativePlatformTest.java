@@ -31,6 +31,15 @@ class NativePlatformTest {
         platform.libraryFileName());
   }
 
+  /** The unsupported-platform message tells users what does work, so it must not go stale. */
+  @Test
+  void reportsEveryReleasePlatformInTheUnsupportedPlatformMessage() throws IOException {
+    String message = new UnsupportedPlatformException("Unsupported operating system").getMessage();
+    for (String platform : releasePlatforms()) {
+      assertTrue(message.contains(platform), () -> platform + " is missing from: " + message);
+    }
+  }
+
   /** Reads the release platform list that the build script generates. */
   private static List<String> releasePlatforms() throws IOException {
     Properties properties = new Properties();

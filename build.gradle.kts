@@ -451,6 +451,9 @@ val generatePlatformManifest by tasks.registering {
 tasks.test {
     useJUnitPlatform()
 
+    // The library loads its native half with System.load; from JDK 24 that needs native access.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+
     // The native library is loaded from the classpath, so it only has to reach the test runtime.
     dependsOn(stageNativeResources, generatePlatformManifest)
     classpath += files(generatedNativeResources, generatedPlatformResources)

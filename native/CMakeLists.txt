@@ -34,8 +34,12 @@ set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
-# Sanitizer group handed to -fsanitize, for example "undefined". The CI builds an instrumented
-# library to run the JUnit suite against it; the shipped binaries are built with this empty.
+# Sanitizer group handed to -fsanitize, for example "undefined" or "address". The CI builds an
+# instrumented library to run the JUnit suite against it; the shipped binaries are built with
+# this empty. The address group is a local tool only: the test task preloads its runtime because
+# the JVM initializes long before it loads this library (see build.gradle.kts), and the suite
+# currently reports a heap-use-after-free inside the vendored Luau teardown with it, which would
+# keep a CI job red until Luau is updated.
 set(LUAU_JNI_SANITIZE "" CACHE STRING "Sanitizer group passed to -fsanitize, empty disables it")
 
 set(LUAU_SANITIZER_FLAGS)
@@ -54,9 +58,13 @@ if(LUAU_JNI_SANITIZE)
         "-g"
     )
     set(LUAU_SANITIZER_LINK_FLAGS ${LUAU_SANITIZER_FLAGS})
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        # GCC also ships the runtime as an archive, and linking it in keeps the library from
-        # needing libubsan.so on the loader path of the process that loads it.
+    # The runtime of the address group deliberately stays a dynamic import: its allocator only
+    # covers the whole process when the runtime was initialized before every other library, and
+    # the JVM loads this one long after it has started. The test task therefore preloads the
+    # shared runtime, which a runtime linked into the library cannot replace.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND LUAU_JNI_SANITIZE STREQUAL "undefined")
+        # GCC also ships the UBSan runtime as an archive, and linking it in keeps the library
+        # from needing libubsan.so on the loader path of the process that loads it.
         list(APPEND LUAU_SANITIZER_LINK_FLAGS "-static-libubsan")
     endif()
     # The vendored Luau objects hold nearly all of the code the tests execute, so the
@@ -91,8 +99,8 @@ target_link_libraries(luau_jni PRIVATE
 )
 
 # The link step needs the sanitizer flag as well: it pulls the runtime that turns a detected
-# undefined behaviour into the "runtime error:" report, and -fno-sanitize-recover makes the
-# process fail instead of returning from the check.
+# defect into the "runtime error:" or "ERROR: AddressSanitizer" report, and -fno-sanitize-recover
+# makes the process fail instead of returning from the check.
 if(LUAU_SANITIZER_LINK_FLAGS)
     target_compile_options(luau_jni PRIVATE ${LUAU_SANITIZER_FLAGS})
     target_link_options(luau_jni PRIVATE ${LUAU_SANITIZER_LINK_FLAGS})
@@ -134,8 +142,12 @@ elseif(NOT MSVC)
         -static-libstdc++
         -static-libgcc
         -Wl,--exclude-libs,ALL
-        -Wl,-s
     )
+    # A sanitizer report names the library and the offset of the fault, which only a symbol
+    # table can turn into a location; the instrumented build keeps it.
+    if(NOT LUAU_JNI_SANITIZE)
+        target_link_options(luau_jni PRIVATE -Wl,-s)
+    endif()
 endif()
 
 set_target_properties(luau_jni PROPERTIES

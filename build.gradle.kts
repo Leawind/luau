@@ -112,6 +112,15 @@ fun sha256Bytes(bytes: ByteArray): String =
 
 val hostOs = normalizedOs()
 val hostArch = normalizedArch()
+
+// CMake refuses the sanitizer switch on MSVC, and its message is buried in the configure output;
+// fail here instead so the reason reaches the console.
+if (nativeSanitizers.isNotEmpty() && hostOs == "windows") {
+    throw GradleException(
+        "-PnativeSanitizers=$nativeSanitizers needs a GCC or Clang toolchain, and MSVC has no " +
+            "-fsanitize=$nativeSanitizers. Run the instrumented tests on Linux.",
+    )
+}
 val hostPlatform = "$hostOs-$hostArch"
 val hostNativeName = nativeLibraryName(hostOs)
 val nativeBuildDirectory = layout.buildDirectory.dir("native/cmake")

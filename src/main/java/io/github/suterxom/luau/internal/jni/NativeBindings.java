@@ -4,7 +4,7 @@ import io.github.suterxom.luau.internal.loader.NativeLibraryLoader;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 
 public final class NativeBindings {
-  public static final int EXPECTED_ABI_VERSION = 10;
+  public static final int EXPECTED_ABI_VERSION = 11;
 
   static {
     NativeLibraryLoader.load();

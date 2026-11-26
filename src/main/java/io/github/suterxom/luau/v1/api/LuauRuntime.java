@@ -7,6 +7,7 @@ import io.github.suterxom.luau.internal.loader.NativePlatform;
 import io.github.suterxom.luau.internal.validation.ModuleNames;
 import io.github.suterxom.luau.v1.api.compile.CompilationDiagnostic;
 import io.github.suterxom.luau.v1.api.compile.CompilationResult;
+import io.github.suterxom.luau.v1.api.compile.SourceRange;
 import io.github.suterxom.luau.v1.api.host.HostModule;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -195,9 +196,15 @@ public final class LuauRuntime {
   private static CompilationDiagnostic decodeDiagnostic(NativeCompilationDiagnostic diagnostic) {
     String moduleName = new String(diagnostic.moduleNameUtf8(), StandardCharsets.UTF_8);
     String message = new String(diagnostic.messageUtf8(), StandardCharsets.UTF_8);
+    SourceRange sourceRange =
+        new SourceRange(
+            diagnostic.startLine(),
+            diagnostic.startColumn(),
+            diagnostic.endLine(),
+            diagnostic.endColumn());
     return switch (diagnostic.stage()) {
-      case 0 -> CompilationDiagnostic.parseError(moduleName, message);
-      case 1 -> CompilationDiagnostic.typeError(moduleName, message);
+      case 0 -> CompilationDiagnostic.parseError(moduleName, message, sourceRange);
+      case 1 -> CompilationDiagnostic.typeError(moduleName, message, sourceRange);
       default ->
           throw new LinkageError(
               "Unknown native compilation diagnostic stage: " + diagnostic.stage());

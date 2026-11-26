@@ -91,11 +91,13 @@ io.github.suterxom.luau
 
 ### 诊断
 
-`CompilationResult` 返回零个或多个不可变的 `CompilationDiagnostic`。诊断包含阶段、严重度、稳定的本项目错误代码、模块名和面向用户的上游原始消息。
+`CompilationResult` 返回零个或多个不可变的 `CompilationDiagnostic`。诊断包含阶段、严重度、稳定的本项目错误代码、模块名、结构化源码范围和面向用户的上游原始消息。
+
+源码范围用 `SourceRange` 表示起止行列，行列都从 1 开始，`0` 表示未知，`SourceRange.UNKNOWN` 是约定的未知值，结束位置沿用 Luau 约定指向范围末尾之后。parse 和 type 诊断的位置来自 Luau 的 `Location`；compile 阶段的失败没有位置，使用 `SourceRange.UNKNOWN`。
+
+消息文本只保留 Luau 的原始诊断，不拼接行列前缀。调用者从结构化字段取得源码范围，不解析消息文本；稳定控制流只能依赖阶段、严重度和错误代码，Luau 上游诊断字符串可以变化。
 
 阶段分为 parse、type、lint 和 compile，诊断代码按阶段固定为少数几种。当前只产生 parse、type 和 compile 阶段的 error：lint 检查未启用，`Stage.LINT` 与 `Severity.WARNING`、`Severity.INFORMATION` 尚无产出，属于预留取值。
-
-Luau 上游诊断字符串可以变化，调用者不应解析消息文本，稳定控制流只能依赖阶段、严重度和错误代码。
 
 语法错误和类型错误通过 `CompilationResult` 返回，不抛 Java 异常。参数违反 Java API 契约、在关闭后使用句柄或原生环境损坏等宿主错误才使用 Java 异常。
 
@@ -357,7 +359,7 @@ JNI 层集中管理原生句柄与异常：
 
 Luau 上游 commit 不是公开 Java API 版本，但必须可以查询。更新 Luau 时必须运行完整的编译、沙箱、资源限制和调试回归测试。
 
-`v1.api` 中已经发布的类型和语义遵循向后兼容原则：破坏性 Java API 变更使用新的版本包，仅内部 JNI 和 C++ 重构不改变 Java API 版本。
+`v1.api` 中已经发布的类型和语义遵循向后兼容原则：破坏性 Java API 变更使用新的版本包，仅内部 JNI 和 C++ 重构不改变 Java API 版本。该原则从第一个稳定版开始生效；发布流程把 0.x 和带预发布后缀的版本判定为 beta，beta 之间允许破坏性调整。
 
 本项目不发布 Maven 构件。消费者把发布出来的通用 JAR 作为模组依赖引入，并在自己的加载器元数据中声明对模组 `luau` 的依赖。是否发布 Maven 及其坐标另行决定。
 
@@ -373,7 +375,7 @@ CI 分为普通构建和 tag 发布。普通构建在推送到 `main` 和针对 
 
 回归测试必须覆盖以下边界：
 
-- 正确源码可以通过 strict 类型检查并生成可执行程序，语法和类型错误带有正确的模块与诊断代码。
+- 正确源码可以通过 strict 类型检查并生成可执行程序，语法和类型错误带有正确的模块、诊断代码与源码范围。
 - 未登记模块、循环依赖和非法模块名被拒绝。
 - 安全值可以 Java → Luau → Java 往返，编解码上限在边界处生效。
 - 宿主正常错误和未预期 Java 异常都不会穿过 JNI。

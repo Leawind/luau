@@ -1247,7 +1247,7 @@ jobject convertTable(JNIEnv* env, lua_State* state, int index, ValueCodecContext
     {
         ++entryCount;
         const int keyType = lua_type(state, -2);
-        if (keyType == LUA_TNUMBER || keyType == LUA_TINTEGER)
+        if (keyType == LUA_TNUMBER)
         {
             const double number = lua_tonumber(state, -2);
             if (!std::isfinite(number) || number < 1 || std::floor(number) != number || number > static_cast<double>(std::numeric_limits<int>::max()))
@@ -1406,7 +1406,6 @@ jobject convertValue(JNIEnv* env, lua_State* state, int index, ValueCodecContext
     case LUA_TBOOLEAN:
         return newNativeValue(env, VALUE_BOOLEAN, lua_toboolean(state, index) != 0);
     case LUA_TNUMBER:
-    case LUA_TINTEGER:
         return newNativeValue(env, VALUE_NUMBER, false, lua_tonumber(state, index));
     case LUA_TSTRING:
     {
@@ -2275,7 +2274,9 @@ extern "C"
         options.moduleTimeLimitSec = 2.0;
         options.applyInternalLimitScaling = true;
 
-        Luau::Frontend frontend(&fileResolver, &configResolver, options);
+        // The solver mode used to come from a flag that defaulted to the old solver; naming it
+        // keeps the diagnostics of this library unchanged across the Luau version bump.
+        Luau::Frontend frontend(Luau::SolverMode::Old, &fileResolver, &configResolver, options);
         Luau::registerBuiltinGlobals(frontend, frontend.globals);
         Luau::freeze(frontend.globals.globalTypes);
 

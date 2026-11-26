@@ -25,6 +25,12 @@ val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
 val glibcFloor = providers.gradleProperty("luau.glibcFloor").get()
 
 /**
+ * Sanitizer group the native library is built with, for example `undefined`. Empty builds the
+ * release library; the CI passes `-PnativeSanitizers=undefined` to test an instrumented one.
+ */
+val nativeSanitizers = providers.gradleProperty("nativeSanitizers").getOrElse("")
+
+/**
  * The single source of truth for the platforms a release ships. The universal JAR and the tests
  * both derive from this list, so adding or dropping a platform only has to happen here.
  */
@@ -159,16 +165,21 @@ val configureNative by tasks.registering(Exec::class) {
     inputs.property("luauCommit", luauCommit)
     inputs.property("jniAbiVersion", jniAbiVersion)
     inputs.property("cmakeGenerator", cmakeGenerator ?: "cmake-default")
+    inputs.property("nativeSanitizers", nativeSanitizers)
     outputs.file(nativeBuildDirectory.map { it.file("CMakeCache.txt") })
 
     doFirst {
         val buildDirectory = nativeBuildDirectory.get().asFile
         val cache = buildDirectory.resolve("CMakeCache.txt")
-        if (cache.isFile && cmakeGenerator != null) {
-            val cachedGenerator = cache.readLines()
-                .firstOrNull { it.startsWith("CMAKE_GENERATOR:INTERNAL=") }
-                ?.substringAfter('=')
-            if (cachedGenerator != cmakeGenerator) buildDirectory.deleteRecursively()
+        if (cache.isFile) {
+            val cached = cache.readLines()
+                .filter { it.contains('=') }
+                .associate { it.substringBefore(':') to it.substringAfter('=') }
+            // A cache written by another generator or another sanitizer setting would be reused
+            // silently, so the whole build directory is thrown away when either changed.
+            val generatorChanged = cmakeGenerator != null && cached["CMAKE_GENERATOR"] != cmakeGenerator
+            val sanitizersChanged = cached["LUAU_JNI_SANITIZE"].orEmpty() != nativeSanitizers
+            if (generatorChanged || sanitizersChanged) buildDirectory.deleteRecursively()
         }
         buildDirectory.mkdirs()
         if (cmakeGenerator != null) environment(msvcEnv)
@@ -193,6 +204,7 @@ val configureNative by tasks.registering(Exec::class) {
             add("-DLUAU_UPSTREAM_VERSION=$luauVersion")
             add("-DLUAU_UPSTREAM_COMMIT=$luauCommit")
             add("-DLUAU_JNI_ABI_VERSION=$jniAbiVersion")
+            add("-DLUAU_JNI_SANITIZE=$nativeSanitizers")
         },
     )
     environment("JAVA_HOME", System.getProperty("java.home"))
@@ -205,6 +217,7 @@ val buildNative by tasks.registering(Exec::class) {
 
     inputs.dir("native/src")
     inputs.dir("native/luau")
+    inputs.property("nativeSanitizers", nativeSanitizers)
     outputs.file(nativeLibrary)
 
     doFirst {
@@ -607,6 +620,13 @@ tasks.test {
     // The native library is loaded from the classpath, so it only has to reach the test runtime.
     dependsOn(stageNativeResources, generatePlatformManifest)
     classpath += files(generatedNativeResources, generatedPlatformResources)
+
+    if (nativeSanitizers.isNotEmpty()) {
+        // A sanitizer reports on stderr and aborts the forked test JVM, so the per-test reports
+        // never get written: the streams have to reach the build log to be seen at all.
+        testLogging.showStandardStreams = true
+        environment("UBSAN_OPTIONS", "print_stacktrace=1")
+    }
 }
 
 tasks.jar {

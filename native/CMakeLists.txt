@@ -34,6 +34,37 @@ set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
+# Sanitizer group handed to -fsanitize, for example "undefined". The CI builds an instrumented
+# library to run the JUnit suite against it; the shipped binaries are built with this empty.
+set(LUAU_JNI_SANITIZE "" CACHE STRING "Sanitizer group passed to -fsanitize, empty disables it")
+
+set(LUAU_SANITIZER_FLAGS)
+set(LUAU_SANITIZER_LINK_FLAGS)
+if(LUAU_JNI_SANITIZE)
+    if(MSVC)
+        message(FATAL_ERROR
+            "LUAU_JNI_SANITIZE=${LUAU_JNI_SANITIZE} needs a GCC or Clang toolchain, "
+            "MSVC has no -fsanitize=${LUAU_JNI_SANITIZE}"
+        )
+    endif()
+    list(APPEND LUAU_SANITIZER_FLAGS
+        "-fsanitize=${LUAU_JNI_SANITIZE}"
+        "-fno-sanitize-recover=${LUAU_JNI_SANITIZE}"
+        "-fno-omit-frame-pointer"
+        "-g"
+    )
+    set(LUAU_SANITIZER_LINK_FLAGS ${LUAU_SANITIZER_FLAGS})
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # GCC also ships the runtime as an archive, and linking it in keeps the library from
+        # needing libubsan.so on the loader path of the process that loads it.
+        list(APPEND LUAU_SANITIZER_LINK_FLAGS "-static-libubsan")
+    endif()
+    # The vendored Luau objects hold nearly all of the code the tests execute, so the
+    # instrumentation has to cover them too: add_compile_options is inherited by the targets
+    # created in the subdirectory below.
+    add_compile_options(${LUAU_SANITIZER_FLAGS})
+endif()
+
 add_subdirectory(luau EXCLUDE_FROM_ALL)
 
 find_package(JNI REQUIRED)
@@ -58,6 +89,14 @@ target_link_libraries(luau_jni PRIVATE
     Luau.Compiler
     Luau.VM
 )
+
+# The link step needs the sanitizer flag as well: it pulls the runtime that turns a detected
+# undefined behaviour into the "runtime error:" report, and -fno-sanitize-recover makes the
+# process fail instead of returning from the check.
+if(LUAU_SANITIZER_LINK_FLAGS)
+    target_compile_options(luau_jni PRIVATE ${LUAU_SANITIZER_FLAGS})
+    target_link_options(luau_jni PRIVATE ${LUAU_SANITIZER_LINK_FLAGS})
+endif()
 
 # Upstream Luau is vendored code with its own warning policy, so its headers stay outside
 # the warning gate below and only src/luau_jni.cpp has to be warning free.

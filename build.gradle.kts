@@ -416,8 +416,154 @@ val validateLuauSubmoduleCommit by tasks.registering {
     }
 }
 
+val validateClangFormatConfig by tasks.registering {
+    group = "verification"
+    description = "Verifies that native/.clang-format copies the upstream Luau style byte for byte."
+
+    val sharedConfig = layout.projectDirectory.file("native/.clang-format")
+    val upstreamConfig = layout.projectDirectory.file("native/luau/.clang-format")
+    inputs.file(sharedConfig)
+
+    doLast {
+        val upstream = upstreamConfig.asFile
+        if (!upstream.isFile) {
+            throw GradleException(
+                "Cannot read native/luau/.clang-format, so the shared C++ style cannot be verified. " +
+                    "Run: git submodule update --init --recursive",
+            )
+        }
+        val shared = sharedConfig.asFile
+        if (!shared.isFile) {
+            throw GradleException(
+                "native/.clang-format is missing. It mirrors the upstream style byte for byte; " +
+                    "restore it from native/luau/.clang-format.",
+            )
+        }
+        val sharedBytes = shared.readBytes()
+        val upstreamBytes = upstream.readBytes()
+        check(sharedBytes.contentEquals(upstreamBytes)) {
+            "native/.clang-format (${sharedBytes.size} bytes) differs from native/luau/.clang-format " +
+                "(${upstreamBytes.size} bytes). The JNI layer is compiled next to Luau sources laid out " +
+                "by the upstream style, so the two files stay identical: re-copy the upstream file, or " +
+                "change both together and say why."
+        }
+    }
+}
+
+/** The C++ sources this repository formats; the vendored native/luau tree keeps its own style. */
+val nativeCppSources = fileTree("native/src") {
+    include("*.cc", "*.cpp", "*.h", "*.hpp")
+}
+
+/** Runs a command and returns its trimmed standard output, or null when it cannot be run at all. */
+fun probeCommandOutput(command: List<String>): String? = try {
+    val process = ProcessBuilder(command)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    if (process.waitFor() == 0) output else null
+} catch (exception: Exception) {
+    null
+}
+
+/**
+ * Locates clang-format: the clangFormatPath property, the CLANG_FORMAT environment variable, PATH,
+ * the uv tool bin directory, then the executable shipped inside the pip clang-format package.
+ */
+fun resolveClangFormat(): String {
+    val fromProperty = providers.gradleProperty("clangFormatPath").orNull
+    if (!fromProperty.isNullOrBlank()) {
+        val executable = File(fromProperty)
+        check(executable.isFile) {
+            "clangFormatPath is $fromProperty, which is not a file. Point it at the clang-format executable."
+        }
+        return executable.absolutePath
+    }
+
+    val fromEnvironment = System.getenv("CLANG_FORMAT")
+    if (!fromEnvironment.isNullOrBlank()) {
+        val executable = File(fromEnvironment)
+        check(executable.isFile) {
+            "CLANG_FORMAT is $fromEnvironment, which is not a file. Point it at the clang-format " +
+                "executable, or unset it to search PATH instead."
+        }
+        return executable.absolutePath
+    }
+
+    if (probeCommandOutput(listOf("clang-format", "--version")) != null) return "clang-format"
+
+    // uv installs tools outside PATH, and a Gradle daemon keeps the PATH it was started with.
+    val uvBinDirectory = probeCommandOutput(listOf("uv", "tool", "dir", "--bin"))
+    if (!uvBinDirectory.isNullOrBlank()) {
+        val executableName = if (hostOs == "windows") "clang-format.exe" else "clang-format"
+        val executable = File(uvBinDirectory, executableName)
+        if (executable.isFile) return executable.absolutePath
+    }
+
+    val fromPip = probeCommandOutput(
+        listOf(
+            "py",
+            "-3",
+            "-c",
+            "import clang_format, os; print(os.path.join(os.path.dirname(clang_format.__file__), 'data', 'bin', 'clang-format.exe'))",
+        ),
+    )
+    if (fromPip != null && File(fromPip).isFile) return File(fromPip).absolutePath
+
+    throw GradleException(
+        "Cannot find clang-format. Pass -PclangFormatPath=<exe>, install the package with " +
+            "py -3 -m pip install clang-format==23.1.5, or install the tool with " +
+            "uv tool install clang-format==23.1.5.",
+    )
+}
+
+/** Runs a tool, capturing both output streams, and reports its exit code with everything it printed. */
+fun runCapturingOutput(command: List<String>): Pair<Int, String> {
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    val output = process.inputStream.bufferedReader().readText().trimEnd()
+    return process.waitFor() to output
+}
+
+val clangFormat by tasks.registering {
+    description = "Formats the native C++ sources in place with clang-format."
+
+    doLast {
+        val executable = resolveClangFormat()
+        logger.info("Using clang-format: $executable")
+        val sources = nativeCppSources.files.map { it.absolutePath }.sorted()
+        check(sources.isNotEmpty()) { "No C++ sources found under native/src" }
+        val (exitCode, output) = runCapturingOutput(listOf(executable, "-i") + sources)
+        if (output.isNotEmpty()) logger.lifecycle(output)
+        check(exitCode == 0) { "clang-format failed with exit code $exitCode" }
+    }
+}
+
+val clangFormatCheck by tasks.registering {
+    group = "verification"
+    description = "Verifies that the native C++ sources are formatted with clang-format."
+
+    inputs.files(nativeCppSources)
+
+    doLast {
+        val executable = resolveClangFormat()
+        logger.info("Using clang-format: $executable")
+        val sources = nativeCppSources.files.map { it.absolutePath }.sorted()
+        check(sources.isNotEmpty()) { "No C++ sources found under native/src" }
+        val (exitCode, output) = runCapturingOutput(listOf(executable, "--dry-run", "--Werror") + sources)
+        if (output.isNotEmpty()) logger.lifecycle(output)
+        check(exitCode == 0) {
+            "clang-format reported formatting violations. Run ./gradlew clangFormat and commit the result."
+        }
+    }
+}
+
 tasks.check {
-    dependsOn(validateModMetadata, validateJniAbiVersion, validateLuauSubmoduleCommit)
+    dependsOn(
+        validateModMetadata,
+        validateJniAbiVersion,
+        validateLuauSubmoduleCommit,
+        validateClangFormatConfig,
+    )
 }
 
 tasks.withType<JavaCompile>().configureEach {

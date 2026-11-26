@@ -199,6 +199,21 @@ val buildNative by tasks.registering(Exec::class) {
     )
 }
 
+val nativeDistributionDirectory = layout.buildDirectory.dir("native/dist")
+
+val stageNativeDistribution by tasks.registering(Sync::class) {
+    group = "native"
+    description = "Stages the current platform native library alone in a clean directory for CI upload."
+    dependsOn(buildNative)
+
+    into(nativeDistributionDirectory)
+    from(nativeLibrary)
+}
+
+tasks.named("build") {
+    dependsOn(stageNativeDistribution)
+}
+
 val generatedNativeResources = layout.buildDirectory.dir("generated/native-resources")
 
 val stageNativeResources by tasks.registering(Sync::class) {

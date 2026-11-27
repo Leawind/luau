@@ -19,6 +19,11 @@ public record NativePlatform(String id, String libraryFileName) {
   }
 
   private static String detectOperatingSystem() {
+    if (isAndroid()) {
+      // Android reports os.name as Linux, so it would otherwise be taken for a glibc Linux host and
+      // fail later with an unsatisfiable link error.
+      throw new UnsupportedPlatformException("Android is not supported");
+    }
     String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
     if (osName.contains(LINUX)) {
       return LINUX;
@@ -31,6 +36,12 @@ public record NativePlatform(String id, String libraryFileName) {
     }
     throw new UnsupportedPlatformException(
         "Unsupported operating system: " + System.getProperty("os.name"));
+  }
+
+  private static boolean isAndroid() {
+    String vmName = System.getProperty("java.vm.name", "");
+    String vendor = System.getProperty("java.vendor", "").toLowerCase(Locale.ROOT);
+    return vmName.equalsIgnoreCase("Dalvik") || vendor.contains("android");
   }
 
   private static String detectArchitecture() {

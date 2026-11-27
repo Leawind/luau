@@ -3,6 +3,7 @@ package io.github.suterxom.luau.internal.loader;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -30,6 +31,26 @@ class NativePlatformTest {
           default -> "libluau_jni.so";
         },
         platform.libraryFileName());
+  }
+
+  /** Android reports os.name as Linux, so it has to be recognised on its own. */
+  @Test
+  void rejectsAndroid() {
+    String vendor = System.getProperty("java.vendor");
+    try {
+      System.setProperty("java.vendor", "The Android Project");
+
+      UnsupportedPlatformException failure =
+          assertThrows(UnsupportedPlatformException.class, NativePlatform::current);
+
+      assertTrue(failure.getMessage().contains("Android"), failure::getMessage);
+    } finally {
+      if (vendor == null) {
+        System.clearProperty("java.vendor");
+      } else {
+        System.setProperty("java.vendor", vendor);
+      }
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 package io.github.suterxom.luau.internal.loader;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,13 +32,34 @@ class NativePlatformTest {
         platform.libraryFileName());
   }
 
-  /** The unsupported-platform message tells users what does work, so it must not go stale. */
+  /**
+   * The unsupported-platform message tells users what does work, so it must follow the manifest.
+   */
   @Test
-  void reportsEveryReleasePlatformInTheUnsupportedPlatformMessage() throws IOException {
-    String message = new UnsupportedPlatformException("Unsupported operating system").getMessage();
-    for (String platform : releasePlatforms()) {
-      assertTrue(message.contains(platform), () -> platform + " is missing from: " + message);
-    }
+  void namesOnlyThePlatformsTheBuildContains() {
+    Properties manifest = new Properties();
+    manifest.setProperty("platforms", "windows-x86_64,macos-aarch64");
+
+    String message =
+        NativeLibraryLoader.unsupported("This JAR does not contain a native library", manifest)
+            .getMessage();
+
+    assertTrue(
+        message.contains("windows-x86_64"), () -> "missing a shipped platform in: " + message);
+    assertTrue(
+        message.contains("macos-aarch64"), () -> "missing a shipped platform in: " + message);
+    assertFalse(
+        message.contains("linux-aarch64"),
+        () -> "named a platform the build does not contain: " + message);
+  }
+
+  /** A build without a readable manifest still reports the reason. */
+  @Test
+  void reportsTheReasonWithoutAPlatformListWhenTheManifestIsAbsent() {
+    String message =
+        NativeLibraryLoader.unsupported("Unsupported operating system: Plan 9", null).getMessage();
+
+    assertEquals("Unsupported operating system: Plan 9", message);
   }
 
   /** Reads the release platform list that the build script generates. */

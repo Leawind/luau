@@ -32,12 +32,17 @@ public final class NativeLibraryLoader {
       return;
     }
 
-    NativePlatform platform = NativePlatform.current();
+    NativePlatform platform;
+    try {
+      platform = NativePlatform.current();
+    } catch (UnsupportedPlatformException detectionFailure) {
+      throw unsupported(detectionFailure.getMessage(), readManifestOrNull());
+    }
     Properties manifest = readManifest();
     String platforms = requiredProperty(manifest, "platforms");
     if (!("," + platforms + ",").contains("," + platform.id() + ",")) {
-      throw new UnsupportedPlatformException(
-          "This JAR does not contain a native library for " + platform.id());
+      throw unsupported(
+          "This JAR does not contain a native library for " + platform.id(), manifest);
     }
 
     String fileName = requiredProperty(manifest, platform.id() + ".filename");
@@ -111,18 +116,41 @@ public final class NativeLibraryLoader {
     loaded = true;
   }
 
-  private static Properties readManifest() {
-    Properties properties = new Properties();
+  /**
+   * Names the platforms this build actually contains, taken from its own manifest.
+   *
+   * <p>The list is not a literal, so a build that ships a different set of platforms describes
+   * itself correctly instead of advertising whatever the source happened to list.
+   */
+  static UnsupportedPlatformException unsupported(String reason, Properties manifest) {
+    String platforms = manifest == null ? null : manifest.getProperty("platforms");
+    if (platforms == null || platforms.isBlank()) {
+      return new UnsupportedPlatformException(reason);
+    }
+    return new UnsupportedPlatformException(
+        reason + ". Supported platforms: " + String.join(", ", platforms.split(",")));
+  }
+
+  private static Properties readManifestOrNull() {
     try (InputStream input =
         NativeLibraryLoader.class.getClassLoader().getResourceAsStream(MANIFEST_RESOURCE)) {
       if (input == null) {
-        throw new LinkageError("Missing native manifest: " + MANIFEST_RESOURCE);
+        return null;
       }
+      Properties properties = new Properties();
       properties.load(input);
       return properties;
     } catch (IOException exception) {
       throw new LinkageError("Failed to read native manifest", exception);
     }
+  }
+
+  private static Properties readManifest() {
+    Properties properties = readManifestOrNull();
+    if (properties == null) {
+      throw new LinkageError("Missing native manifest: " + MANIFEST_RESOURCE);
+    }
+    return properties;
   }
 
   private static byte[] readResource(String resourceName) {

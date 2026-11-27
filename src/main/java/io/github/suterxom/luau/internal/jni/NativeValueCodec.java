@@ -46,6 +46,37 @@ public final class NativeValueCodec {
         .toArray(NativeValue[]::new);
   }
 
+  /** Counts the variable-length payload emitted by a host return value. */
+  public static long outputBytes(List<LuauValue> values) {
+    long[] total = {0};
+    for (LuauValue value : values) {
+      addOutputBytes(value, total);
+    }
+    return total[0];
+  }
+
+  private static void addOutputBytes(LuauValue value, long[] total) {
+    if (value instanceof LuauString string) {
+      total[0] = addSaturated(total[0], string.value().getBytes(StandardCharsets.UTF_8).length);
+    } else if (value instanceof LuauBuffer buffer) {
+      total[0] = addSaturated(total[0], buffer.value().length);
+    } else if (value instanceof LuauArray array) {
+      for (LuauValue element : array.values()) {
+        addOutputBytes(element, total);
+      }
+    } else if (value instanceof LuauTable table) {
+      for (Map.Entry<String, LuauValue> entry : table.values().entrySet()) {
+        total[0] = addSaturated(total[0], entry.getKey().getBytes(StandardCharsets.UTF_8).length);
+        addOutputBytes(entry.getValue(), total);
+      }
+    }
+  }
+
+  private static long addSaturated(long left, long right) {
+    long sum = left + right;
+    return sum < 0 || sum < left ? Long.MAX_VALUE : sum;
+  }
+
   private static LuauValue fromNativeValue(NativeValue value, Budget budget, int depth) {
     budget.visit(depth);
     return switch (value.kind()) {

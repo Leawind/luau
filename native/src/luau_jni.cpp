@@ -47,6 +47,7 @@ constexpr size_t VALUE_MAX_NODES = 10'000;
 constexpr size_t VALUE_MAX_STRING_BYTES = 512 * 1024;
 constexpr size_t VALUE_MAX_BUFFER_BYTES = 1024 * 1024;
 constexpr size_t VALUE_MAX_TOTAL_BYTES = 1024 * 1024;
+constexpr size_t ERROR_MAX_BYTES = 64 * 1024;
 
 constexpr int EXECUTION_COMPLETED = 0;
 constexpr int EXECUTION_RUNTIME_FAILED = 1;
@@ -149,6 +150,15 @@ void executionInterrupt(lua_State* state, int gcState)
     auto* context = static_cast<ExecutionContext*>(lua_callbacks(state)->userdata);
     ++context->interruptChecks;
 
+    // Once a hard limit is reached, keep the interrupt installed. A Lua error can be caught by
+    // pcall/xpcall and execution would continue without any further safepoint checks; LUA_BREAK
+    // exits the current resume and is classified by finishExecution using exceededLimit.
+    if (context->exceededLimit != EXECUTION_COMPLETED)
+    {
+        lua_break(state);
+        return;
+    }
+
     if (context->interruptChecks > context->maxInterruptChecks)
         context->exceededLimit = EXECUTION_INTERRUPT_LIMIT;
     else if (std::chrono::steady_clock::now() >= context->deadline)
@@ -165,9 +175,7 @@ void executionInterrupt(lua_State* state, int gcState)
     else
         return;
 
-    lua_callbacks(state)->interrupt = nullptr;
-    lua_rawcheckstack(state, 1);
-    luaL_error(state, "%s", "Luau execution resource limit exceeded");
+    lua_break(state);
 }
 
 struct LuaStateCloser
@@ -203,7 +211,7 @@ struct NativeScriptInstance
     std::unordered_map<std::string, int> moduleClosureRefs;
     std::unordered_set<std::string> loadingModules;
     std::unordered_map<std::string, std::unordered_set<int>> breakpoints;
-    std::unordered_map<const void*, size_t> activeArrayLengths;
+    int arrayMetadataRef = -1;
     JavaVM* javaVm = nullptr;
     jobject hostRegistry = nullptr;
     jobject currentHostContext = nullptr;
@@ -262,6 +270,42 @@ struct NativeScriptInstance
             luaL_sandboxthread(thread);
             lua_setthreaddata(thread, this);
         }
+
+        // Java arrays are Lua tables, so their distinction from ordinary tables has to live beside
+        // the VM. Weak keys keep the metadata for saved arrays without retaining collected tables.
+        lua_newtable(globalState.get());
+        lua_newtable(globalState.get());
+        lua_pushliteral(globalState.get(), "__mode");
+        lua_pushliteral(globalState.get(), "k");
+        lua_rawset(globalState.get(), -3);
+        lua_setmetatable(globalState.get(), -2);
+        arrayMetadataRef = lua_ref(globalState.get(), -1);
+        lua_pop(globalState.get(), 1);
+    }
+
+    void rememberArray(lua_State* owner, int index, size_t length)
+    {
+        if (arrayMetadataRef == LUA_REFNIL)
+            return;
+        lua_getref(owner, arrayMetadataRef);
+        lua_pushvalue(owner, index);
+        lua_pushnumber(owner, static_cast<double>(length));
+        lua_rawset(owner, -3);
+        lua_pop(owner, 1);
+    }
+
+    std::optional<size_t> arrayLength(lua_State* owner, int index) const
+    {
+        if (arrayMetadataRef == LUA_REFNIL)
+            return std::nullopt;
+        lua_getref(owner, arrayMetadataRef);
+        lua_pushvalue(owner, index);
+        lua_rawget(owner, -2);
+        std::optional<size_t> result;
+        if (lua_isnumber(owner, -1))
+            result = static_cast<size_t>(lua_tonumber(owner, -1));
+        lua_pop(owner, 2);
+        return result;
     }
 
     ~NativeScriptInstance()
@@ -765,11 +809,25 @@ bool readNamedByteArrays(
     return true;
 }
 
+std::string boundedErrorMessage(std::string_view message)
+{
+    if (message.size() <= ERROR_MAX_BYTES)
+        return std::string(message);
+
+    constexpr std::string_view suffix = "… [truncated]";
+    size_t length = ERROR_MAX_BYTES - suffix.size();
+    while (length > 0 && (static_cast<unsigned char>(message[length]) & 0xc0) == 0x80)
+        --length;
+    std::string result(message.substr(0, length));
+    result.append(suffix);
+    return result;
+}
+
 std::string luaError(lua_State* state)
 {
     size_t length = 0;
     const char* message = lua_tolstring(state, -1, &length);
-    return message == nullptr ? "Unknown Luau error" : std::string(message, length);
+    return message == nullptr ? "Unknown Luau error" : boundedErrorMessage(std::string_view(message, length));
 }
 
 std::string debugModuleName(const NativeScriptInstance& instance, const char* source)
@@ -1120,20 +1178,6 @@ jobject newNativeValue(
 
 struct ValueCodecContext
 {
-    explicit ValueCodecContext(lua_State* state = nullptr)
-        : state(state)
-    {
-    }
-
-    ~ValueCodecContext()
-    {
-        if (state != nullptr)
-        {
-            for (int reference : arrayReferences)
-                lua_unref(state, reference);
-        }
-    }
-
     size_t nodes = 0;
     size_t stringBytes = 0;
     size_t bufferBytes = 0;
@@ -1141,25 +1185,6 @@ struct ValueCodecContext
     bool limitExceeded = false;
     std::string error;
     std::unordered_set<const void*> activeTables;
-    std::unordered_map<const void*, size_t> arrayLengths;
-
-    void rememberArray(lua_State* owner, int index, size_t length)
-    {
-        const void* pointer = lua_topointer(owner, index);
-        arrayLengths[pointer] = length;
-        arrayReferences.push_back(lua_ref(owner, index));
-    }
-
-    void resetBudget()
-    {
-        nodes = 0;
-        stringBytes = 0;
-        bufferBytes = 0;
-        totalBytes = 0;
-        limitExceeded = false;
-        error.clear();
-        activeTables.clear();
-    }
 
     bool visit(size_t depth)
     {
@@ -1191,9 +1216,6 @@ struct ValueCodecContext
     }
 
 private:
-    lua_State* state;
-    std::vector<int> arrayReferences;
-
     bool addBytes(std::string_view kind, size_t& current, size_t count, size_t maximum)
     {
         if (count > maximum - std::min(current, maximum))
@@ -1241,7 +1263,8 @@ jobject convertTable(JNIEnv* env, lua_State* state, int index, ValueCodecContext
     size_t largestArrayIndex = 0;
     bool hasArrayKeys = false;
     bool hasStringKeys = false;
-    const auto knownArray = context.arrayLengths.find(tablePointer);
+    auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+    const auto knownArray = instance == nullptr ? std::nullopt : instance->arrayLength(state, tableIndex);
     lua_pushnil(state);
     while (lua_next(state, tableIndex) != 0)
     {
@@ -1280,18 +1303,18 @@ jobject convertTable(JNIEnv* env, lua_State* state, int index, ValueCodecContext
         lua_pop(state, 1);
     }
 
-    if (hasStringKeys && (hasArrayKeys || knownArray != context.arrayLengths.end()))
+    if (hasStringKeys && (hasArrayKeys || knownArray.has_value()))
     {
         context.fail("Mixed Luau array and string table keys are not supported");
         return nullptr;
     }
-    if (knownArray == context.arrayLengths.end() && hasArrayKeys && largestArrayIndex != entryCount)
+    if (!knownArray.has_value() && hasArrayKeys && largestArrayIndex != entryCount)
     {
         context.fail("Sparse Luau arrays cannot cross the value boundary");
         return nullptr;
     }
-    const bool isArray = hasArrayKeys || knownArray != context.arrayLengths.end();
-    const size_t arrayLength = knownArray == context.arrayLengths.end() ? entryCount : std::max(knownArray->second, largestArrayIndex);
+    const bool isArray = hasArrayKeys || knownArray.has_value();
+    const size_t arrayLength = knownArray.has_value() ? std::max(*knownArray, largestArrayIndex) : entryCount;
     if (arrayLength > VALUE_MAX_NODES)
     {
         context.fail("Luau value exceeds maximum node count " + std::to_string(VALUE_MAX_NODES), true);
@@ -1501,7 +1524,9 @@ bool pushNativeValue(JNIEnv* env, lua_State* state, jobject value, ValueCodecCon
         const jsize count = env->GetArrayLength(elements);
         lua_createtable(state, count, 0);
         const int tableIndex = lua_absindex(state, -1);
-        context.rememberArray(state, tableIndex, static_cast<size_t>(count));
+        auto* instance = static_cast<NativeScriptInstance*>(lua_getthreaddata(state));
+        if (instance != nullptr)
+            instance->rememberArray(state, tableIndex, static_cast<size_t>(count));
         for (jsize index = 0; index < count; ++index)
         {
             jobject element = env->GetObjectArrayElement(elements, index);
@@ -1822,7 +1847,7 @@ int invokeHostFunction(lua_State* state)
     if (messageBytes != nullptr)
         env->DeleteLocalRef(messageBytes);
     const jsize resultCount = env->GetArrayLength(values);
-    ValueCodecContext resultContext(state);
+    ValueCodecContext resultContext;
     for (jsize index = 0; index < resultCount; ++index)
     {
         jobject value = env->GetObjectArrayElement(values, index);
@@ -1924,8 +1949,9 @@ jobject newNativeExecutionResult(
     if (symbols == nullptr)
         return nullptr;
 
-    jbyteArray messageBytes = message.empty() ? nullptr : newByteArray(env, message);
-    if (!message.empty() && messageBytes == nullptr)
+    const std::string boundedMessage = boundedErrorMessage(message);
+    jbyteArray messageBytes = boundedMessage.empty() ? nullptr : newByteArray(env, boundedMessage);
+    if (!boundedMessage.empty() && messageBytes == nullptr)
         return nullptr;
     jobject pauseInfo = pause == nullptr ? nullptr : newNativePauseInfo(env, *pause);
     if (pause != nullptr && pauseInfo == nullptr)
@@ -1974,6 +2000,8 @@ void prepareExecution(
     context.maxRuntimeNanos = maxRuntimeNanos;
     context.exceededLimit = EXECUTION_COMPLETED;
     context.lastStatus = EXECUTION_COMPLETED;
+    context.pauseRequested.store(false);
+    context.terminateRequested.store(false);
 }
 
 void startExecutionSegment(lua_State* thread, ExecutionContext& context)
@@ -2026,7 +2054,6 @@ jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executi
         {
             context.lastStatus = EXECUTION_RUNTIME_FAILED;
             instance.paused = false;
-            instance.activeArrayLengths.clear();
             instance.pausedThreads.clear();
             lua_singlestep(thread, false);
             clearSingleStep(instance);
@@ -2050,7 +2077,6 @@ jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executi
         else if (executionStatus == LUA_ERRMEM)
             status = EXECUTION_MEMORY_LIMIT;
         context.lastStatus = status;
-        instance.activeArrayLengths.clear();
         return newNativeExecutionResult(
             env, status, nullptr, executionFailureMessage(thread, status, executionStatus), context.elapsedNanos, context
         );
@@ -2061,7 +2087,6 @@ jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executi
         if (lua_gettop(thread) != 1 || lua_type(thread, 1) != LUA_TTABLE)
         {
             context.lastStatus = EXECUTION_RUNTIME_FAILED;
-            instance.activeArrayLengths.clear();
             return newNativeExecutionResult(
                 env, EXECUTION_RUNTIME_FAILED, nullptr, "Root module must return exactly one export table", context.elapsedNanos, context
             );
@@ -2071,17 +2096,14 @@ jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executi
     }
 
     ValueCodecContext valueContext;
-    valueContext.arrayLengths = instance.activeArrayLengths;
     jobjectArray values = newNativeValueArray(env, thread, captureExports ? 0 : lua_gettop(thread), valueContext);
     if (values == nullptr)
     {
         if (env->ExceptionCheck())
         {
-            instance.activeArrayLengths.clear();
             return nullptr;
         }
         context.lastStatus = valueContext.limitExceeded ? EXECUTION_VALUE_LIMIT : EXECUTION_VALUE_ERROR;
-        instance.activeArrayLengths.clear();
         return newNativeExecutionResult(
             env,
             context.lastStatus,
@@ -2093,11 +2115,9 @@ jobject finishExecution(JNIEnv* env, NativeScriptInstance& instance, int executi
     }
     if (env->ExceptionCheck())
     {
-        instance.activeArrayLengths.clear();
         return nullptr;
     }
     context.lastStatus = EXECUTION_COMPLETED;
-    instance.activeArrayLengths.clear();
     jobject result = newNativeExecutionResult(env, EXECUTION_COMPLETED, values, {}, context.elapsedNanos, context);
     env->DeleteLocalRef(values);
     return result;
@@ -2138,7 +2158,6 @@ jobject terminatePausedExecution(JNIEnv* env, NativeScriptInstance& instance, st
 {
     lua_resetthread(instance.thread);
     instance.loadingModules.clear();
-    instance.activeArrayLengths.clear();
     instance.pauseSnapshot.reset();
     instance.pausedThreads.clear();
     instance.paused = false;
@@ -2658,7 +2677,6 @@ extern "C"
             static_cast<uint64_t>(maxHostCalls),
             static_cast<uint64_t>(maxHostOutputBytes)
         );
-        instance->activeArrayLengths.clear();
         lua_resetthread(instance->thread);
         lua_setsafeenv(instance->thread, LUA_GLOBALSINDEX, false);
         lua_getref(instance->thread, instance->exportsRef);
@@ -2674,7 +2692,7 @@ extern "C"
         }
 
         const jsize argumentCount = env->GetArrayLength(arguments);
-        ValueCodecContext argumentContext(instance->thread);
+        ValueCodecContext argumentContext;
         for (jsize index = 0; index < argumentCount; ++index)
         {
             jobject argument = env->GetObjectArrayElement(arguments, index);
@@ -2688,7 +2706,6 @@ extern "C"
             }
             env->DeleteLocalRef(argument);
         }
-        instance->activeArrayLengths = argumentContext.arrayLengths;
 
         instance->activeOperation = ActiveOperation::InvokeExport;
         instance->currentHostContext = hostContext;

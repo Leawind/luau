@@ -672,21 +672,21 @@ tasks.test {
     classpath += files(generatedNativeResources, generatedPlatformResources)
 
     if (nativeSanitizers.isNotEmpty()) {
-        // A sanitizer reports on stderr and aborts the forked test JVM, so the per-test reports
-        // never get written: the streams have to reach the build log to be seen at all.
-        testLogging.showStandardStreams = true
         if (preloadsSanitizerRuntime) {
-            // The runtime has to be the first library of the process, which only preloading can
-            // arrange. The JVM manages its own heap and takes SEGV itself for null checks and
-            // safepoint polling, so leak checking has to go and the signal handlers have to stay
-            // with the JVM.
-            environment(
-                "ASAN_OPTIONS",
-                "detect_leaks=0:handle_segv=0:allow_user_segv_handler=1",
-            )
+            // Preloading the runtime puts the JVM's own heap behind AddressSanitizer as well, and
+            // every allocation there carries shadow memory and red zones. The runtime also reserves
+            // a large virtual address range, so the heap has to be bounded explicitly instead of
+            // being sized from the host's physical memory. Reports go to a log file rather than
+            // being streamed back: a sanitizer run produces far more output than a daemon can hold
+            // while forwarding it.
+            maxHeapSize = "1g"
+            environment("ASAN_OPTIONS", "detect_leaks=0:handle_segv=0:allow_user_segv_handler=1:log_path=build/asan")
             environment("LD_PRELOAD", nativeSanitizerRuntime)
             inputs.property("nativeSanitizerRuntime", nativeSanitizerRuntime)
         } else {
+            // A sanitizer reports on stderr and aborts the forked test JVM, so the per-test reports
+            // never get written: the streams have to reach the build log to be seen at all.
+            testLogging.showStandardStreams = true
             environment("UBSAN_OPTIONS", "print_stacktrace=1")
         }
     }

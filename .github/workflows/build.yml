@@ -180,13 +180,14 @@ jobs:
         if: always()
         shell: bash
         run: |
-          {
-            grep -n -A 60 'ERROR: AddressSanitizer' asan.log || true
-            find build/test-results -name '*.xml' -exec grep -l 'AddressSanitizer' {} + 2>/dev/null | head -5 || true
-          } > asan-report.txt
+          # The runtime writes each process's report under build/asan.<pid>, the test JVM and the
+          # child JVM the hard-limit regression spawns alike.
+          cat build/asan.* > asan-report.txt 2>/dev/null || true
           if [ -s asan-report.txt ]; then
-            cat asan-report.txt
+            head -c 60000 asan-report.txt
             echo "::warning::AddressSanitizer reported a memory error (see asan-report.txt)"
+          else
+            echo "no AddressSanitizer report was produced"
           fi
 
       - name: Upload the AddressSanitizer log

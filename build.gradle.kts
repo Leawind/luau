@@ -17,6 +17,9 @@ val modAuthor = providers.gradleProperty("mod.author").get()
 val modDescription = providers.gradleProperty("mod.description").get()
 val modLogo = providers.gradleProperty("mod.logo").get()
 val modLicense = providers.gradleProperty("mod.license").get()
+val modHomepage = providers.gradleProperty("mod.homepage").get()
+val modIssues = providers.gradleProperty("mod.issues").get()
+val modSources = providers.gradleProperty("mod.sources").get()
 val minecraftVersion = providers.gradleProperty("mod.minecraftVersion").get()
 val packFormat = providers.gradleProperty("mod.packFormat").get()
 val luauVersion = providers.gradleProperty("luau.version").get()
@@ -380,6 +383,9 @@ tasks.processResources {
         "description" to modDescription,
         "logo" to modLogo,
         "license" to modLicense,
+        "homepage" to modHomepage,
+        "issues" to modIssues,
+        "sources" to modSources,
         "minecraftVersion" to minecraftVersion,
         "packFormat" to packFormat,
         "luauVersion" to luauVersion,

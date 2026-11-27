@@ -63,7 +63,13 @@ Java 与 C++ 之间使用 JNI。JNI 层只提供 Java 实现所需的窄接口�
 
 由于没有 Minecraft 源码兼容层，本项目不使用 Stonecutter，也不为每个 Minecraft 版本分别复制源码或生成 JAR。
 
-基线为 Java 17 和 Minecraft 1.20.1 及以上。提高 Java 或 Minecraft 最低版本属于兼容性变更，必须在发布说明中记录。
+基线为 Java 17 和 Minecraft 1.20.1 及以上。Java 17 本身只是 Minecraft 1.18 起的运行要求（1.17 要求 Java 16，1.20.5 起要求 Java 21），所以 1.20.1 是有意选择的支持起点，不是技术下限。提高 Java 或 Minecraft 最低版本属于兼容性变更，必须在发布说明中记录。
+
+JAR 内置一份 `pack.mcmeta`。Fabric API 与 NeoForge 在它缺失时会自行合成资源包元数据，但 Forge 会把缺少它的模组判定为损坏的资源包并给出警告，所以它随 JAR 一起发布。本项目没有资源与数据文件，这份元数据只用于满足加载器，其中唯一的版本常量是资源包格式，不描述任何随 Minecraft 版本变化的内容。
+
+元数据里的项目链接（`contact`、`issueTrackerURL`、`displayURL`）指向源码仓库与议题页，供模组列表和平台读取。Forge 侧声明 `displayTest = "IGNORE_ALL_VERSION"`：库不参与客户端与服务器的状态同步，被仅客户端模组嵌入时不该让玩家在进入服务器时看到版本不一致。
+
+分发自 Modrinth 与 CurseForge 的两个渠道完成，宿主模组通过元数据声明对 `luau` 的依赖。本项目暂不发布 Maven 制品。
 
 ### 包结构
 

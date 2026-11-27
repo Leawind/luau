@@ -1,6 +1,7 @@
 modLoader = "lowcodefml"
 loaderVersion = "*"
 license = "${license}"
+issueTrackerURL = "${issues}"
 
 [[mods]]
 modId = "${id}"
@@ -10,6 +11,8 @@ authors = "${author}"
 description = '''${description}'''
 logoFile = "${logo}"
 logoBlur = false
+displayURL = "${homepage}"
+displayTest = "IGNORE_ALL_VERSION"
 
 [[dependencies."${id}"]]
 modId = "minecraft"

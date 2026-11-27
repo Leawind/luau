@@ -364,6 +364,59 @@ class RuntimeBoundariesTest {
   }
 
   @Test
+  void largeStringsRespectMemoryLimitOnlyWhenContentIsUnique() {
+    var compilation =
+        runtime.compile(
+            "main",
+            Map.of(
+                "main",
+                """
+                local kept = {}
+                return {
+                    identical = function(count)
+                        for index = 1, count do
+                            kept[index] = string.rep("x", 1024 * 1024)
+                        end
+                        return #kept[count]
+                    end,
+                    unique = function(count)
+                        for index = 1, count do
+                            kept[index] = string.rep(string.format("%08d", index), 131072)
+                        end
+                        return #kept[count]
+                    end,
+                }
+                """));
+    assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
+
+    try (CompiledChunk chunk = compilation.chunk().orElseThrow();
+        ScriptInstance instance = chunk.createInstance(new InstanceConfig(16L * 1024 * 1024))) {
+      assertInstanceOf(ExecutionResult.Completed.class, instance.initialize());
+      var budget = new ExecutionBudget(Duration.ofSeconds(20), 100_000_000, 100, 0);
+
+      // Equal contents collapse onto one VM string, so repeating them cannot exhaust the cap.
+      var identical =
+          assertInstanceOf(
+              ExecutionResult.Completed.class,
+              instance.invokeExport(
+                  "identical", List.of(new LuauNumber(300)), HostCallContext.empty(), budget));
+      assertEquals(List.of(new LuauNumber(1048576)), identical.values());
+
+      // Distinct megabyte strings are real allocations and must hit the cap instead of growing past
+      // it.
+      var exceeded =
+          assertInstanceOf(
+              ExecutionResult.LimitExceeded.class,
+              instance.invokeExport(
+                  "unique", List.of(new LuauNumber(300)), HostCallContext.empty(), budget));
+      assertEquals(ExecutionResult.LimitExceeded.Kind.MEMORY, exceeded.kind(), exceeded::toString);
+      assertTrue(
+          exceeded.metrics().peakMemoryBytes() <= 16L * 1024 * 1024,
+          () -> "peak memory exceeded the cap: " + exceeded.metrics().peakMemoryBytes());
+    }
+  }
+
+  @Test
   void terminateBreaksOutOfProtectedCall() {
     var compilation =
         runtime.compile(

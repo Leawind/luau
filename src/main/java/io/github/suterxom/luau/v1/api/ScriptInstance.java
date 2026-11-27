@@ -7,6 +7,7 @@ import io.github.suterxom.luau.v1.api.debug.PauseInfo;
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 import io.github.suterxom.luau.v1.api.host.HostModule;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
+import io.github.suterxom.luau.v1.api.runtime.ExecutionMetrics;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.value.LuauValue;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +38,7 @@ public final class ScriptInstance implements AutoCloseable {
   private boolean running;
   private PausedOperation pausedOperation;
   private HostCallContext pausedHostContext;
+  private ExecutionScope pausedScope;
   private PauseInfo pauseInfo;
 
   ScriptInstance(
@@ -75,12 +77,31 @@ public final class ScriptInstance implements AutoCloseable {
   }
 
   public synchronized ExecutionResult execute(HostCallContext hostContext, ExecutionBudget budget) {
+    return executeInternal(hostContext, budget, null);
+  }
+
+  /** Executes the root chunk as part of a logical operation with a shared budget. */
+  public synchronized ExecutionResult execute(HostCallContext hostContext, ExecutionScope scope) {
+    return executeInternal(hostContext, null, scope);
+  }
+
+  private ExecutionResult executeInternal(
+      HostCallContext hostContext, ExecutionBudget budget, ExecutionScope scope) {
     checkOwnerThread();
     checkUsable();
     Objects.requireNonNull(hostContext, "hostContext");
-    Objects.requireNonNull(budget, "budget");
+    if (scope == null) {
+      Objects.requireNonNull(budget, "budget");
+    }
     if (initialized) {
       throw new IllegalStateException("Use invokeExport after the instance is initialized");
+    }
+
+    ExecutionBudget effectiveBudget = effectiveBudget(budget, scope);
+    if (effectiveBudget == null) {
+      ExecutionResult result = scope.exhaustedResult();
+      acceptInvocationResult(result, PausedOperation.EXECUTE, hostContext, scope);
+      return result;
     }
 
     beginInvocation();
@@ -90,11 +111,12 @@ public final class ScriptInstance implements AutoCloseable {
               NativeBindings.executeInstance(
                   nativeHandle,
                   hostContext,
-                  budget.maxRuntimeNanos(),
-                  budget.maxInterruptChecks(),
-                  budget.maxHostCalls(),
-                  budget.maxHostOutputBytes()));
-      acceptInvocationResult(result, PausedOperation.EXECUTE, hostContext);
+                  effectiveBudget.maxRuntimeNanos(),
+                  effectiveBudget.maxInterruptChecks(),
+                  effectiveBudget.maxHostCalls(),
+                  effectiveBudget.maxHostOutputBytes()));
+      result = applyScope(result, scope);
+      acceptInvocationResult(result, PausedOperation.EXECUTE, hostContext, scope);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -122,12 +144,32 @@ public final class ScriptInstance implements AutoCloseable {
   /** Executes the root chunk once with explicit host capabilities and resource limits. */
   public synchronized ExecutionResult initialize(
       HostCallContext hostContext, ExecutionBudget budget) {
+    return initializeInternal(hostContext, budget, null);
+  }
+
+  /** Executes the root chunk once as part of a logical operation with a shared budget. */
+  public synchronized ExecutionResult initialize(
+      HostCallContext hostContext, ExecutionScope scope) {
+    return initializeInternal(hostContext, null, scope);
+  }
+
+  private ExecutionResult initializeInternal(
+      HostCallContext hostContext, ExecutionBudget budget, ExecutionScope scope) {
     checkOwnerThread();
     checkUsable();
     Objects.requireNonNull(hostContext, "hostContext");
-    Objects.requireNonNull(budget, "budget");
+    if (scope == null) {
+      Objects.requireNonNull(budget, "budget");
+    }
     if (initialized) {
       throw new IllegalStateException("Script instance is already initialized");
+    }
+
+    ExecutionBudget effectiveBudget = effectiveBudget(budget, scope);
+    if (effectiveBudget == null) {
+      ExecutionResult result = scope.exhaustedResult();
+      acceptInvocationResult(result, PausedOperation.INITIALIZE, hostContext, scope);
+      return result;
     }
 
     beginInvocation();
@@ -137,11 +179,12 @@ public final class ScriptInstance implements AutoCloseable {
               NativeBindings.initializeInstance(
                   nativeHandle,
                   hostContext,
-                  budget.maxRuntimeNanos(),
-                  budget.maxInterruptChecks(),
-                  budget.maxHostCalls(),
-                  budget.maxHostOutputBytes()));
-      acceptInvocationResult(result, PausedOperation.INITIALIZE, hostContext);
+                  effectiveBudget.maxRuntimeNanos(),
+                  effectiveBudget.maxInterruptChecks(),
+                  effectiveBudget.maxHostCalls(),
+                  effectiveBudget.maxHostOutputBytes()));
+      result = applyScope(result, scope);
+      acceptInvocationResult(result, PausedOperation.INITIALIZE, hostContext, scope);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -171,14 +214,38 @@ public final class ScriptInstance implements AutoCloseable {
   /** Invokes an exported function with explicit host capabilities and resource limits. */
   public synchronized ExecutionResult invokeExport(
       String name, List<LuauValue> arguments, HostCallContext hostContext, ExecutionBudget budget) {
+    return invokeExportInternal(name, arguments, hostContext, budget, null);
+  }
+
+  /** Invokes an exported function as part of a logical operation with a shared budget. */
+  public synchronized ExecutionResult invokeExport(
+      String name, List<LuauValue> arguments, HostCallContext hostContext, ExecutionScope scope) {
+    return invokeExportInternal(name, arguments, hostContext, null, scope);
+  }
+
+  private ExecutionResult invokeExportInternal(
+      String name,
+      List<LuauValue> arguments,
+      HostCallContext hostContext,
+      ExecutionBudget budget,
+      ExecutionScope scope) {
     checkOwnerThread();
     checkUsable();
     validateExportName(name);
     Objects.requireNonNull(arguments, "arguments");
     Objects.requireNonNull(hostContext, "hostContext");
-    Objects.requireNonNull(budget, "budget");
+    if (scope == null) {
+      Objects.requireNonNull(budget, "budget");
+    }
     if (!initialized) {
       throw new IllegalStateException("Script instance is not initialized");
+    }
+
+    ExecutionBudget effectiveBudget = effectiveBudget(budget, scope);
+    if (effectiveBudget == null) {
+      ExecutionResult result = scope.exhaustedResult();
+      acceptInvocationResult(result, PausedOperation.INVOKE_EXPORT, hostContext, scope);
+      return result;
     }
 
     var nativeArguments = NativeValueCodec.toNativeValues(List.copyOf(arguments));
@@ -191,11 +258,12 @@ public final class ScriptInstance implements AutoCloseable {
                   name.getBytes(StandardCharsets.UTF_8),
                   nativeArguments,
                   hostContext,
-                  budget.maxRuntimeNanos(),
-                  budget.maxInterruptChecks(),
-                  budget.maxHostCalls(),
-                  budget.maxHostOutputBytes()));
-      acceptInvocationResult(result, PausedOperation.INVOKE_EXPORT, hostContext);
+                  effectiveBudget.maxRuntimeNanos(),
+                  effectiveBudget.maxInterruptChecks(),
+                  effectiveBudget.maxHostCalls(),
+                  effectiveBudget.maxHostOutputBytes()));
+      result = applyScope(result, scope);
+      acceptInvocationResult(result, PausedOperation.INVOKE_EXPORT, hostContext, scope);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -382,12 +450,14 @@ public final class ScriptInstance implements AutoCloseable {
 
     PausedOperation operation = pausedOperation;
     HostCallContext hostContext = pausedHostContext;
+    ExecutionScope scope = pausedScope;
     beginInvocation();
     try {
       ExecutionResult result =
           CompiledChunk.decodeExecutionResult(
               NativeBindings.resumeInstance(nativeHandle, hostContext, stepMode));
-      acceptInvocationResult(result, operation, hostContext);
+      result = applyScope(result, scope);
+      acceptInvocationResult(result, operation, hostContext, scope);
       return result;
     } catch (RuntimeException | Error throwable) {
       faulted = true;
@@ -411,16 +481,21 @@ public final class ScriptInstance implements AutoCloseable {
       clearPause();
       throw new LinkageError("Native debugger termination returned an invalid result");
     }
+    result = applyScope(result, pausedScope);
     faulted = true;
     clearPause();
     return result;
   }
 
   private void acceptInvocationResult(
-      ExecutionResult result, PausedOperation operation, HostCallContext hostContext) {
+      ExecutionResult result,
+      PausedOperation operation,
+      HostCallContext hostContext,
+      ExecutionScope scope) {
     if (result instanceof ExecutionResult.Paused paused) {
       pausedOperation = operation;
       pausedHostContext = hostContext;
+      pausedScope = scope;
       pauseInfo = paused.pauseInfo();
       return;
     }
@@ -438,7 +513,42 @@ public final class ScriptInstance implements AutoCloseable {
   private void clearPause() {
     pausedOperation = null;
     pausedHostContext = null;
+    pausedScope = null;
     pauseInfo = null;
+  }
+
+  private static ExecutionBudget effectiveBudget(ExecutionBudget budget, ExecutionScope scope) {
+    return scope == null ? budget : scope.remainingBudget();
+  }
+
+  private static ExecutionResult applyScope(ExecutionResult result, ExecutionScope scope) {
+    if (scope == null) {
+      return result;
+    }
+    if (result instanceof ExecutionResult.Paused) {
+      return withMetrics(result, scope.aggregate(result.metrics()));
+    }
+    scope.consume(result.metrics());
+    return withMetrics(result, scope.metrics());
+  }
+
+  private static ExecutionResult withMetrics(ExecutionResult result, ExecutionMetrics metrics) {
+    if (result instanceof ExecutionResult.Completed completed) {
+      return new ExecutionResult.Completed(completed.values(), metrics);
+    }
+    if (result instanceof ExecutionResult.Paused paused) {
+      return new ExecutionResult.Paused(paused.pauseInfo(), metrics);
+    }
+    if (result instanceof ExecutionResult.RuntimeFailed failed) {
+      return new ExecutionResult.RuntimeFailed(failed.message(), metrics);
+    }
+    if (result instanceof ExecutionResult.LimitExceeded exceeded) {
+      return new ExecutionResult.LimitExceeded(exceeded.kind(), exceeded.message(), metrics);
+    }
+    if (result instanceof ExecutionResult.Terminated terminated) {
+      return new ExecutionResult.Terminated(terminated.message(), metrics);
+    }
+    throw new LinkageError("Unknown execution result type: " + result.getClass());
   }
 
   private static void validateExportName(String name) {

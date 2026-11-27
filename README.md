@@ -49,7 +49,10 @@ Building requires JDK 21 or newer. The produced classes target Java 17.
 Compile a root module, create an instance, initialize it once, and invoke an exported function:
 
 ```java
+import io.github.suterxom.luau.v1.api.ExecutionScope;
 import io.github.suterxom.luau.v1.api.LuauRuntime;
+import io.github.suterxom.luau.v1.api.host.HostCallContext;
+import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
 import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
 import io.github.suterxom.luau.v1.api.value.LuauNumber;
 
@@ -85,6 +88,16 @@ try (var chunk = compilation.chunk().orElseThrow();
 ```
 
 The root module must return an export table. `initialize()` runs its top-level code once and keeps that table, and `invokeExport(name, arguments)` calls a function from it. Handle the other `ExecutionResult` variants when scripts may pause, exceed limits, or fail at runtime.
+
+When initialization and export calls form one logical operation, give them a shared `ExecutionScope`:
+
+```java
+var scope = new ExecutionScope(ExecutionBudget.DEFAULT);
+instance.initialize(HostCallContext.empty(), scope);
+var result = instance.invokeExport("add", List.of(new LuauNumber(2)), HostCallContext.empty(), scope);
+```
+
+The scope shares the time, interrupt-check, host-call and host-output limits across those calls. Result metrics are aggregated for the logical operation.
 
 ## Using it from another mod
 

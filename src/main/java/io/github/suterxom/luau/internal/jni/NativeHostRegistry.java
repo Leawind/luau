@@ -119,12 +119,19 @@ public final class NativeHostRegistry {
 
     long outputBytes = outputDelta(context, outputBefore);
     try {
-      return new NativeHostCallResult(
-          COMPLETED, NativeValueCodec.toNativeValues(returned), null, outputBytes);
+      NativeValue[] nativeValues = NativeValueCodec.toNativeValues(returned);
+      long payloadBytes = NativeValueCodec.outputBytes(returned);
+      outputBytes = addSaturated(outputBytes, payloadBytes);
+      return new NativeHostCallResult(COMPLETED, nativeValues, null, outputBytes);
     } catch (IllegalArgumentException exception) {
       LOGGER.log(System.Logger.Level.ERROR, "Host return boundary rejected a value", exception);
       return failure(VALUE_LIMIT, "Host value boundary limit exceeded", outputBytes);
     }
+  }
+
+  private static long addSaturated(long left, long right) {
+    long sum = left + right;
+    return sum < 0 || sum < left ? Long.MAX_VALUE : sum;
   }
 
   private static NativeHostCallResult failure(int status, String message, long outputBytes) {

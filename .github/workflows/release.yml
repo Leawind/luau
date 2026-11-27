@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Builds the whole release without publishing, so the packaging and the publishing actions can be
+  # exercised before a tag exists. Only a tag push ever publishes.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -124,7 +127,9 @@ jobs:
         shell: bash
         run: |
           project_version="$(sed -n 's/^mod.version=//p' gradle.properties)"
-          test "${GITHUB_REF_NAME}" = "v${project_version}"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            test "${GITHUB_REF_NAME}" = "v${project_version}"
+          fi
 
           if ! [[ "${project_version}" =~ ^(0|[1-9][0-9]*)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "Unsupported version format: ${project_version}" >&2
@@ -146,6 +151,7 @@ jobs:
         run: ./gradlew verifyUniversalJar sourcesJar -PprebuiltNativesDir=prebuilt-natives
 
       - name: Verify publishing configuration
+        if: github.event_name == 'push'
         env:
           MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
@@ -159,6 +165,7 @@ jobs:
           test -n "${CURSEFORGE_TOKEN}" || { echo "Missing repository secret CURSEFORGE_TOKEN" >&2; exit 1; }
 
       - name: Publish release
+        if: github.event_name == 'push'
         uses: Kira-NT/mc-publish@v3.3
         with:
           version: ${{ steps.release_metadata.outputs.version }}

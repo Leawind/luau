@@ -30,7 +30,7 @@
 #include "lualib.h"
 #include "luacode.h"
 
-namespace suterxom::luau
+namespace leawind::luau
 {
 namespace
 {
@@ -475,13 +475,13 @@ void releaseJniSymbols(JNIEnv* env, JniSymbols& symbols)
 
 bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
 {
-    symbols.nativeValue = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeValue");
+    symbols.nativeValue = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeValue");
     if (symbols.nativeValue == nullptr)
         return false;
     const JniMethod nativeValueMethods[] = {
         {
             "<init>",
-            "(IZD[B[Lio/github/suterxom/luau/internal/jni/NativeValue;[[B)V",
+            "(IZD[B[Lio/github/leawind/luau/internal/jni/NativeValue;[[B)V",
             &symbols.nativeValueConstructor,
         },
         {"kind", "()I", &symbols.nativeValueKind},
@@ -490,7 +490,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
         {"bytes", "()[B", &symbols.nativeValueBytes},
         {
             "elements",
-            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;",
+            "()[Lio/github/leawind/luau/internal/jni/NativeValue;",
             &symbols.nativeValueElements,
         },
         {"keysUtf8", "()[[B", &symbols.nativeValueKeys},
@@ -511,7 +511,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.string, stringMethods))
         return false;
 
-    symbols.exception = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeLuauException");
+    symbols.exception = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeLuauException");
     if (symbols.exception == nullptr)
         return false;
     const JniMethod exceptionMethods[] = {
@@ -520,7 +520,7 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.exception, exceptionMethods))
         return false;
 
-    symbols.stackFrame = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeStackFrame");
+    symbols.stackFrame = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeStackFrame");
     if (symbols.stackFrame == nullptr)
         return false;
     const JniMethod stackFrameMethods[] = {
@@ -529,34 +529,34 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.stackFrame, stackFrameMethods))
         return false;
 
-    symbols.pauseInfo = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativePauseInfo");
+    symbols.pauseInfo = resolveClass(env, "io/github/leawind/luau/internal/jni/NativePauseInfo");
     if (symbols.pauseInfo == nullptr)
         return false;
     const JniMethod pauseInfoMethods[] = {
         {
             "<init>",
-            "(I[BI[Lio/github/suterxom/luau/internal/jni/NativeStackFrame;)V",
+            "(I[BI[Lio/github/leawind/luau/internal/jni/NativeStackFrame;)V",
             &symbols.pauseInfoConstructor,
         },
     };
     if (!resolveMethods(env, symbols.pauseInfo, pauseInfoMethods))
         return false;
 
-    symbols.executionResult = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeExecutionResult");
+    symbols.executionResult = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeExecutionResult");
     if (symbols.executionResult == nullptr)
         return false;
     const JniMethod executionResultMethods[] = {
         {
             "<init>",
-            "(I[Lio/github/suterxom/luau/internal/jni/NativeValue;[BJJJJJJ"
-            "Lio/github/suterxom/luau/internal/jni/NativePauseInfo;)V",
+            "(I[Lio/github/leawind/luau/internal/jni/NativeValue;[BJJJJJJ"
+            "Lio/github/leawind/luau/internal/jni/NativePauseInfo;)V",
             &symbols.executionResultConstructor,
         },
     };
     if (!resolveMethods(env, symbols.executionResult, executionResultMethods))
         return false;
 
-    symbols.compilationDiagnostic = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeCompilationDiagnostic");
+    symbols.compilationDiagnostic = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeCompilationDiagnostic");
     if (symbols.compilationDiagnostic == nullptr)
         return false;
     const JniMethod compilationDiagnosticMethods[] = {
@@ -565,30 +565,30 @@ bool resolveJniSymbols(JNIEnv* env, JniSymbols& symbols)
     if (!resolveMethods(env, symbols.compilationDiagnostic, compilationDiagnosticMethods))
         return false;
 
-    symbols.hostRegistry = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeHostRegistry");
+    symbols.hostRegistry = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeHostRegistry");
     if (symbols.hostRegistry == nullptr)
         return false;
     const JniMethod hostRegistryMethods[] = {
         {"exports", "([B)[[B", &symbols.hostRegistryExports},
         {
             "invoke",
-            "([B[B[Lio/github/suterxom/luau/internal/jni/NativeValue;"
-            "Lio/github/suterxom/luau/v1/api/host/HostCallContext;)"
-            "Lio/github/suterxom/luau/internal/jni/NativeHostCallResult;",
+            "([B[B[Lio/github/leawind/luau/internal/jni/NativeValue;"
+            "Lio/github/leawind/luau/v1/api/host/HostCallContext;)"
+            "Lio/github/leawind/luau/internal/jni/NativeHostCallResult;",
             &symbols.hostRegistryInvoke,
         },
     };
     if (!resolveMethods(env, symbols.hostRegistry, hostRegistryMethods))
         return false;
 
-    symbols.hostCallResult = resolveClass(env, "io/github/suterxom/luau/internal/jni/NativeHostCallResult");
+    symbols.hostCallResult = resolveClass(env, "io/github/leawind/luau/internal/jni/NativeHostCallResult");
     if (symbols.hostCallResult == nullptr)
         return false;
     const JniMethod hostCallResultMethods[] = {
         {"status", "()I", &symbols.hostCallResultStatus},
         {
             "values",
-            "()[Lio/github/suterxom/luau/internal/jni/NativeValue;",
+            "()[Lio/github/leawind/luau/internal/jni/NativeValue;",
             &symbols.hostCallResultValues,
         },
         {"messageUtf8", "()[B", &symbols.hostCallResultMessage},
@@ -2202,33 +2202,33 @@ jobject executeChunk(
     return finishExecution(env, instance, executionStatus, captureExports);
 }
 } // namespace
-} // namespace suterxom::luau
+} // namespace leawind::luau
 
 extern "C"
 {
-    JNIEXPORT jint JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_abiVersion(JNIEnv*, jclass)
+    JNIEXPORT jint JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_abiVersion(JNIEnv*, jclass)
     {
         return LUAU_JNI_ABI_VERSION;
     }
 
-    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauVersion(JNIEnv* env, jclass)
+    JNIEXPORT jstring JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_luauVersion(JNIEnv* env, jclass)
     {
         return env->NewStringUTF(LUAU_UPSTREAM_VERSION);
     }
 
-    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_luauCommit(JNIEnv* env, jclass)
+    JNIEXPORT jstring JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_luauCommit(JNIEnv* env, jclass)
     {
         return env->NewStringUTF(LUAU_UPSTREAM_COMMIT);
     }
 
-    JNIEXPORT jstring JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_runtimeVersion(JNIEnv* env, jclass)
+    JNIEXPORT jstring JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_runtimeVersion(JNIEnv* env, jclass)
     {
         return env->NewStringUTF(LUAU_RUNTIME_VERSION);
     }
 
     jbyteArray compileImpl(JNIEnv* env, jclass, jbyteArray chunkNameUtf8, jbyteArray sourceUtf8)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         const std::string chunk = getUtf8Bytes(env, chunkNameUtf8);
         const std::string source = getUtf8Bytes(env, sourceUtf8);
@@ -2272,7 +2272,7 @@ extern "C"
 
     jobjectArray typecheckImpl(JNIEnv* env, jclass, jbyteArray rootModuleNameUtf8, jobjectArray moduleNamesUtf8, jobjectArray sourcesUtf8)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
         std::unordered_map<std::string, std::string> sources;
@@ -2413,7 +2413,7 @@ extern "C"
         jlong maxMemoryBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
         std::unordered_map<std::string, std::string> moduleBytecodes;
@@ -2478,7 +2478,7 @@ extern "C"
         jlong maxMemoryBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         const std::string rootModuleName = getUtf8Bytes(env, rootModuleNameUtf8);
         std::unordered_map<std::string, std::string> moduleBytecodes;
@@ -2524,7 +2524,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr)
@@ -2585,7 +2585,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr || instance->faulted || instance->initialized || instance->paused)
@@ -2646,7 +2646,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr || instance->faulted || !instance->initialized || instance->paused)
@@ -2725,7 +2725,7 @@ extern "C"
 
     jint setBreakpointImpl(JNIEnv* env, jlong handle, jbyteArray moduleNameUtf8, jint line, jboolean enabled)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr || instance->faulted || instance->paused)
@@ -2798,7 +2798,7 @@ extern "C"
 
     void requestPauseInstanceImpl(JNIEnv* env, jlong handle)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr)
@@ -2811,7 +2811,7 @@ extern "C"
 
     void requestTerminateInstanceImpl(JNIEnv* env, jlong handle)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr)
@@ -2824,7 +2824,7 @@ extern "C"
 
     jobject resumeInstanceImpl(JNIEnv* env, jlong handle, jobject hostContext, jint requestedStepMode)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr || instance->faulted || !instance->paused || instance->activeOperation == ActiveOperation::None ||
@@ -2883,7 +2883,7 @@ extern "C"
 
     jobject terminatePausedInstanceImpl(JNIEnv* env, jlong handle)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
 
         auto* instance = reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
         if (instance == nullptr || instance->faulted || !instance->paused || instance->activeOperation == ActiveOperation::None)
@@ -2895,14 +2895,10 @@ extern "C"
         return terminatePausedExecution(env, *instance, "Luau execution was terminated while paused");
     }
 
-    JNIEXPORT jbyteArray JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_compile(
-        JNIEnv* env,
-        jclass bindingClass,
-        jbyteArray chunkNameUtf8,
-        jbyteArray sourceUtf8
-    )
+    JNIEXPORT jbyteArray JNICALL
+    Java_io_github_leawind_luau_internal_jni_NativeBindings_compile(JNIEnv* env, jclass bindingClass, jbyteArray chunkNameUtf8, jbyteArray sourceUtf8)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jbyteArray>(
             env,
             [&]()
@@ -2912,7 +2908,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jobjectArray JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_typecheckModules(
+    JNIEXPORT jobjectArray JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_typecheckModules(
         JNIEnv* env,
         jclass bindingClass,
         jbyteArray rootModuleNameUtf8,
@@ -2920,7 +2916,7 @@ extern "C"
         jobjectArray sourcesUtf8
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobjectArray>(
             env,
             [&]()
@@ -2930,7 +2926,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_execute(
+    JNIEXPORT jobject JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_execute(
         JNIEnv* env,
         jclass bindingClass,
         jbyteArray rootModuleNameUtf8,
@@ -2945,7 +2941,7 @@ extern "C"
         jlong maxMemoryBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -2968,7 +2964,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jlong JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_createInstance(
+    JNIEXPORT jlong JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_createInstance(
         JNIEnv* env,
         jclass,
         jbyteArray rootModuleNameUtf8,
@@ -2978,7 +2974,7 @@ extern "C"
         jlong maxMemoryBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         try
         {
             return createInstanceImpl(env, rootModuleNameUtf8, moduleNamesUtf8, bytecodeArrays, hostRegistry, maxMemoryBytes);
@@ -2996,7 +2992,7 @@ extern "C"
         return 0;
     }
 
-    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_executeInstance(
+    JNIEXPORT jobject JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_executeInstance(
         JNIEnv* env,
         jclass,
         jlong handle,
@@ -3007,7 +3003,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -3017,7 +3013,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_initializeInstance(
+    JNIEXPORT jobject JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_initializeInstance(
         JNIEnv* env,
         jclass,
         jlong handle,
@@ -3028,7 +3024,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -3038,7 +3034,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_invokeExport(
+    JNIEXPORT jobject JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_invokeExport(
         JNIEnv* env,
         jclass,
         jlong handle,
@@ -3051,7 +3047,7 @@ extern "C"
         jlong maxHostOutputBytes
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -3063,7 +3059,7 @@ extern "C"
         );
     }
 
-    JNIEXPORT jint JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_setBreakpoint(
+    JNIEXPORT jint JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_setBreakpoint(
         JNIEnv* env,
         jclass,
         jlong handle,
@@ -3072,7 +3068,7 @@ extern "C"
         jboolean enabled
     )
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         try
         {
             return setBreakpointImpl(env, handle, moduleNameUtf8, line, enabled);
@@ -3090,20 +3086,20 @@ extern "C"
         return -1;
     }
 
-    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestPauseInstance(JNIEnv* env, jclass, jlong handle)
+    JNIEXPORT void JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_requestPauseInstance(JNIEnv* env, jclass, jlong handle)
     {
         requestPauseInstanceImpl(env, handle);
     }
 
-    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_requestTerminateInstance(JNIEnv* env, jclass, jlong handle)
+    JNIEXPORT void JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_requestTerminateInstance(JNIEnv* env, jclass, jlong handle)
     {
         requestTerminateInstanceImpl(env, handle);
     }
 
     JNIEXPORT jobject JNICALL
-    Java_io_github_suterxom_luau_internal_jni_NativeBindings_resumeInstance(JNIEnv* env, jclass, jlong handle, jobject hostContext, jint stepMode)
+    Java_io_github_leawind_luau_internal_jni_NativeBindings_resumeInstance(JNIEnv* env, jclass, jlong handle, jobject hostContext, jint stepMode)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -3113,9 +3109,9 @@ extern "C"
         );
     }
 
-    JNIEXPORT jobject JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_terminatePausedInstance(JNIEnv* env, jclass, jlong handle)
+    JNIEXPORT jobject JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_terminatePausedInstance(JNIEnv* env, jclass, jlong handle)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         return guardNativeCall<jobject>(
             env,
             [&]()
@@ -3125,9 +3121,9 @@ extern "C"
         );
     }
 
-    JNIEXPORT void JNICALL Java_io_github_suterxom_luau_internal_jni_NativeBindings_closeInstance(JNIEnv*, jclass, jlong handle)
+    JNIEXPORT void JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_closeInstance(JNIEnv*, jclass, jlong handle)
     {
-        using namespace suterxom::luau;
+        using namespace leawind::luau;
         delete reinterpret_cast<NativeScriptInstance*>(static_cast<intptr_t>(handle));
     }
 }

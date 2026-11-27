@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(suterxom_luau_runtime LANGUAGES C CXX)
+project(luau_runtime LANGUAGES C CXX)
 
 # Statically link the C runtime so the library loads without the VC++ redistributable.
 if(MSVC)

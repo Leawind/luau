@@ -49,12 +49,12 @@ Building requires JDK 21 or newer. The produced classes target Java 17.
 Compile a root module, create an instance, initialize it once, and invoke an exported function:
 
 ```java
-import io.github.suterxom.luau.v1.api.ExecutionScope;
-import io.github.suterxom.luau.v1.api.LuauRuntime;
-import io.github.suterxom.luau.v1.api.host.HostCallContext;
-import io.github.suterxom.luau.v1.api.runtime.ExecutionBudget;
-import io.github.suterxom.luau.v1.api.runtime.ExecutionResult;
-import io.github.suterxom.luau.v1.api.value.LuauNumber;
+import io.github.leawind.luau.v1.api.ExecutionScope;
+import io.github.leawind.luau.v1.api.LuauRuntime;
+import io.github.leawind.luau.v1.api.host.HostCallContext;
+import io.github.leawind.luau.v1.api.runtime.ExecutionBudget;
+import io.github.leawind.luau.v1.api.runtime.ExecutionResult;
+import io.github.leawind.luau.v1.api.value.LuauNumber;
 
 import java.util.List;
 

@@ -4,7 +4,7 @@
 
 Luau Runtime Mod 是供其他 Minecraft 模组使用的 Luau 运行时基础库模组，模组 ID 为 `luau`。
 
-本项目首先服务于 SuterXOM，但公开 API 不包含设备、网络、物品或 Minecraft 世界等 SuterXOM 专有概念。它的定位类似于 KubeJS 使用的 Rhino：上层模组依赖稳定的 Java API，本项目负责语言实现、运行隔离、资源限制和调试能力。
+本项目供上层模组使用，公开 API 不包含设备、网络、物品或 Minecraft 世界等具体模组的概念。它的定位类似于 KubeJS 使用的 Rhino：上层模组依赖稳定的 Java API，本项目负责语言实现、运行隔离、资源限制和调试能力。
 
 本项目负责：
 
@@ -23,7 +23,7 @@ Luau Runtime Mod 是供其他 Minecraft 模组使用的 Luau 运行时基础库�
 - 验证和提交脚本产生的游戏命令。
 - 调试 GUI、调试网络协议和玩家权限。
 - 文件系统、网络、进程或任意 Java 类的脚本绑定。
-- SuterXOM 的物品令牌和账本。
+- 宿主模组自定义的物品令牌和账本。
 
 ## 设计原则
 
@@ -37,7 +37,7 @@ Luau Runtime Mod 是供其他 Minecraft 模组使用的 Luau 运行时基础库�
 
 ### Java API 稳定，原生实现可替换
 
-Luau 的 C++ 分析接口可能随上游演进。上游接口封装在本项目内部，不泄漏到公开 Java API；公开 API 通过 `io.github.suterxom.luau.v1.api` 这类版本化包维护兼容性。
+Luau 的 C++ 分析接口可能随上游演进。上游接口封装在本项目内部，不泄漏到公开 Java API；公开 API 通过 `io.github.leawind.luau.v1.api` 这类版本化包维护兼容性。
 
 ### 失败应可分类和恢复
 
@@ -73,10 +73,10 @@ JAR 内置一份 `pack.mcmeta`。Fabric API 与 NeoForge 在它缺失时会自�
 
 ### 包结构
 
-所有 Java 源码和类型位于 `io.github.suterxom.luau` 根包下：
+所有 Java 源码和类型位于 `io.github.leawind.luau` 根包下：
 
 ```text
-io.github.suterxom.luau
+io.github.leawind.luau
 ├── v1.api: compile、debug、host、runtime、value
 └── internal: jni、loader、validation
 ```
@@ -182,7 +182,7 @@ Java 与 Luau 之间只支持以下值：
 
 每次编解码都受最大深度、节点数、字符串字节数、buffer 字节数和总字节数限制。超出限制产生结构化的编码结果或参数异常，不允许递归到 JVM 或原生栈溢出。
 
-SuterXOM 的 16 字节物品令牌可用 buffer 表示，但固定长度、不可变性、权限和账本语义由 SuterXOM API 验证，不属于本项目通用值层。
+宿主的 16 字节物品令牌可用 buffer 表示，但固定长度、不可变性、权限和账本语义由宿主自行验证，不属于本项目通用值层。
 
 ## 脚本实例
 
@@ -201,7 +201,7 @@ SuterXOM 的 16 字节物品令牌可用 buffer 表示，但固定长度、不�
 
 ### 初始化与导出
 
-创建实例后，运行时在受预算控制的初始化调用中执行根模块。根模块返回一个只供宿主调用的导出表。上层模组按名称调用导出的 Luau 函数，例如 SuterXOM 将设备事件名映射为处理函数名。
+创建实例后，运行时在受预算控制的初始化调用中执行根模块。根模块返回一个只供宿主调用的导出表。上层模组按名称调用导出的 Luau 函数，例如把设备事件名映射为处理函数名。
 
 一个实例同一时刻只允许一个初始化或导出调用。调用尚未结束或处于调试暂停状态时，再次调用其他导出立即失败；事件排队由上层模组负责。
 
@@ -292,7 +292,7 @@ Luau 的 interrupt 回调保证在循环回边、调用、返回和 GC 等 safep
 
 设置断点时，请求行被解析为该函数中可执行的实际行，Java API 返回解析后的位置，使客户端能够显示断点是否有效以及实际命中的行。
 
-命中断点后，运行时记录暂停原因和当前源码位置，把 coroutine 置为暂停状态，并从当前 JNI 执行调用返回 `Paused`，同时保留 VM、coroutine、预算累计值和宿主上下文。暂停时当前事件仍未结束：SuterXOM 的命令缓冲继续由 SuterXOM 持有且不得提交，继续并正常完成后才可提交，终止、错误或超限时由 SuterXOM 丢弃。
+命中断点后，运行时记录暂停原因和当前源码位置，把 coroutine 置为暂停状态，并从当前 JNI 执行调用返回 `Paused`，同时保留 VM、coroutine、预算累计值和宿主上下文。暂停时当前事件仍未结束：宿主持有的命令缓冲不得提交，继续并正常完成后才可提交，终止、错误或超限时由宿主丢弃。
 
 单步按逻辑 Luau 调用栈深度定义：
 
@@ -398,7 +398,7 @@ CI 分为普通构建和 tag 发布。普通构建在推送到 `main` 和针对 
 
 ## 第一版验收条件
 
-第一版可以认为具备接入 SuterXOM 的条件，当且仅当：
+第一版可以认为具备被上层模组接入的条件，当且仅当：
 
 - Fabric、Forge、NeoForge 使用同一个包含全部目标 native 的 JAR。
 - 两个脚本实例之间不存在可观察的可变状态共享。

@@ -468,7 +468,7 @@ val validateJniAbiVersion by tasks.registering {
     description = "Verifies that NativeBindings.EXPECTED_ABI_VERSION matches luau.jniAbiVersion."
 
     val bindingsSource = layout.projectDirectory.file(
-        "src/main/java/io/github/suterxom/luau/internal/jni/NativeBindings.java",
+        "src/main/java/io/github/leawind/luau/internal/jni/NativeBindings.java",
     )
     inputs.file(bindingsSource)
     inputs.property("jniAbiVersion", jniAbiVersion)

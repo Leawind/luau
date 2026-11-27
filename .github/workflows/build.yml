@@ -144,6 +144,61 @@ jobs:
             exit 1
           fi
 
+  asan:
+    name: AddressSanitizer
+    # Instrumented for diagnosis only: the close-time heap-use-after-free is still being triaged,
+    # so this job collects the report without gating the build until the cause is fixed.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    container: quay.io/pypa/manylinux_2_28_x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the gcc-toolset AddressSanitizer runtime
+        shell: bash
+        run: dnf install -y --setopt=install_weak_deps=False gcc-toolset-14-libasan-devel
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: true
+
+      - name: Test with AddressSanitizer
+        shell: bash
+        run: |
+          source /opt/rh/gcc-toolset-14/enable
+          ./gradlew test -PnativeSanitizers=address -PnativeSanitizerRuntime=/lib64/libasan.so.8 --console=plain 2>&1 | tee asan.log
+
+      - name: Collect the AddressSanitizer report
+        if: always()
+        shell: bash
+        run: |
+          {
+            grep -n -A 60 'ERROR: AddressSanitizer' asan.log || true
+            find build/test-results -name '*.xml' -exec grep -l 'AddressSanitizer' {} + 2>/dev/null | head -5 || true
+          } > asan-report.txt
+          if [ -s asan-report.txt ]; then
+            cat asan-report.txt
+            echo "::warning::AddressSanitizer reported a memory error (see asan-report.txt)"
+          fi
+
+      - name: Upload the AddressSanitizer log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-log
+          path: |
+            asan.log
+            asan-report.txt
+          if-no-files-found: ignore
+
   universal:
     name: Verify universal JAR
     needs: [build, build-linux]

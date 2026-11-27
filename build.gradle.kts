@@ -175,6 +175,7 @@ val sanitizerPreloadLibraries: List<String> =
                     val candidates =
                         listOf(
                             "/usr/lib/x86_64-linux-gnu/libstdc++.so.6",
+                            "/usr/lib/aarch64-linux-gnu/libstdc++.so.6",
                             "/usr/lib64/libstdc++.so.6",
                             "/lib64/libstdc++.so.6",
                         )

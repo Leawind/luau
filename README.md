@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src/main/resources/logo.png" width="160" alt="Luau Runtime">
+<img src="docs/logo.svg" width="160" alt="Luau Runtime">
 
 </div>
 

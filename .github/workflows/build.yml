@@ -3,8 +3,20 @@ name: Build
 on:
   push:
     branches: [main]
+    # Documentation and repository metadata cannot break a build, and the matrix costs a full
+    # five-platform run, so these do not trigger it.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/dependabot.yml'
+      - '.git-blame-ignore-revs'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/dependabot.yml'
+      - '.git-blame-ignore-revs'
 
 permissions:
   contents: read

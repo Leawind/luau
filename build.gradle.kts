@@ -155,6 +155,43 @@ if (preloadsSanitizerRuntime) {
     }
 }
 
+/**
+ * Libraries the test JVM preloads, AddressSanitizer first.
+ *
+ * Luau reports errors by throwing a C++ exception. AddressSanitizer interposes `__cxa_throw`, and
+ * resolves the function it delegates to when it initialises. Preloading only the sanitizer runtime
+ * means that resolution happens while the C++ runtime is still absent, so the interceptor aborts
+ * the process with a CHECK failure on the first script error instead of sanitizing anything.
+ * Loading the C++ runtime right behind the sanitizer keeps the sanitizer first and gives the
+ * interceptor something to resolve.
+ */
+val sanitizerPreloadLibraries: List<String> =
+    if (preloadsSanitizerRuntime) {
+        val cxxRuntime = run {
+            val besideRuntime = File(nativeSanitizerRuntime).parentFile?.resolve("libstdc++.so.6")
+            when {
+                besideRuntime != null && besideRuntime.isFile -> besideRuntime.absolutePath
+                else -> {
+                    val candidates =
+                        listOf(
+                            "/usr/lib/x86_64-linux-gnu/libstdc++.so.6",
+                            "/usr/lib64/libstdc++.so.6",
+                            "/lib64/libstdc++.so.6",
+                        )
+                    candidates.firstOrNull { File(it).isFile }
+                }
+            }
+        }
+        require(cxxRuntime != null) {
+            "AddressSanitizer interposes the C++ exception path, so libstdc++.so.6 has to be " +
+                "preloaded next to $nativeSanitizerRuntime; none was found beside it or in the " +
+                "usual system directories."
+        }
+        listOf(File(nativeSanitizerRuntime).absolutePath, cxxRuntime)
+    } else {
+        emptyList()
+    }
+
 val hostPlatform = "$hostOs-$hostArch"
 val hostNativeName = nativeLibraryName(hostOs)
 val nativeBuildDirectory = layout.buildDirectory.dir("native/cmake")
@@ -681,8 +718,8 @@ tasks.test {
             // while forwarding it.
             maxHeapSize = "1g"
             environment("ASAN_OPTIONS", "detect_leaks=0:handle_segv=0:allow_user_segv_handler=1:log_path=build/asan")
-            environment("LD_PRELOAD", nativeSanitizerRuntime)
-            inputs.property("nativeSanitizerRuntime", nativeSanitizerRuntime)
+            environment("LD_PRELOAD", sanitizerPreloadLibraries.joinToString(" "))
+            inputs.property("nativeSanitizerRuntime", sanitizerPreloadLibraries)
         } else {
             // A sanitizer reports on stderr and aborts the forked test JVM, so the per-test reports
             // never get written: the streams have to reach the build log to be seen at all.

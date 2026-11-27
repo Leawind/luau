@@ -3,6 +3,7 @@ package io.github.suterxom.luau.v1.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.github.suterxom.luau.v1.api.host.HostCallContext;
 import io.github.suterxom.luau.v1.api.host.HostFunction;
@@ -573,6 +574,13 @@ class RuntimeBoundariesTest {
   }
 
   private static void assertChildStopsAtLimit(String protectedCall) throws Exception {
+    // AddressSanitizer only instruments a process when its runtime is the first library loaded,
+    // and the child JVM inherits the parent's preload without being able to arrange that. The
+    // child then aborts on startup instead of reaching the limit, so the limit itself is checked
+    // in-process under the sanitizer and only the process isolation is skipped.
+    assumeTrue(
+        System.getenv("ASAN_OPTIONS") == null,
+        "process isolation for hard limits is not meaningful under AddressSanitizer");
     String classpath = childClasspath();
     Process child =
         new ProcessBuilder(

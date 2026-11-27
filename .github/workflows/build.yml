@@ -150,6 +150,9 @@ jobs:
     # so this job collects the report without gating the build until the cause is fixed.
     continue-on-error: true
     runs-on: ubuntu-24.04
+    # A sanitizer run is far slower than a normal one and the runtime can leave a process waiting
+    # on its own report; the cap keeps a broken run from holding a runner for an hour.
+    timeout-minutes: 30
     container: quay.io/pypa/manylinux_2_28_x86_64
 
     steps:

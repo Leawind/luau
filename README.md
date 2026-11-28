@@ -130,6 +130,8 @@ git submodule update --init --recursive
 
 `core` is the library: the Java API, the JNI binding, and the native build. `mod` wraps it into the loader-visible artifact. On Windows the native build requires Visual Studio Build Tools with the C++ workload. Building requires JDK 21 or newer; the produced classes target Java 17.
 
+A local build can cover every platform as well. `gh run download <run-id> --dir prebuilt-natives` fetches the five platform artifacts of one CI run, one directory per platform; with `LUAU_PREBUILT_NATIVES_DIR=prebuilt-natives`, `./gradlew build` also produces `mod/build/libs/*-universal.jar`. The prebuilt libraries have to come from the current native sources, and one built from other sources is rejected with its platform and both fingerprints.
+
 ## Third-party notices
 
 This project embeds and distributes the [Luau](https://github.com/luau-lang/luau) implementation under the MIT License, which is based on the Lua 5.x implementation, also under the MIT License. See [`native/luau/LICENSE.txt`](native/luau/LICENSE.txt) and [`native/luau/lua_LICENSE.txt`](native/luau/lua_LICENSE.txt).

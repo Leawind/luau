@@ -174,11 +174,15 @@ tasks.jar {
 
 /**
  * Directory the platform builds hand their native libraries over in, one subdirectory per platform.
- * CI passes a path relative to the repository root, so it is resolved against the root project
- * rather than against this module.
+ * The gradle property wins over the environment variable, and a path relative to either is resolved
+ * against the repository root rather than against this module, which is how CI passes it.
  */
 val prebuiltNativesDirectory = providers.gradleProperty("prebuiltNativesDir")
-    .map { rootProject.layout.projectDirectory.dir(it) }
+    .orElse(providers.environmentVariable("LUAU_PREBUILT_NATIVES_DIR"))
+    .map { value ->
+        val directory = File(value)
+        if (directory.isAbsolute) directory else rootProject.layout.projectDirectory.dir(value).asFile
+    }
 val universalNativeResources = layout.buildDirectory.dir("generated/universal-native-resources")
 
 /**
@@ -244,11 +248,15 @@ val stageUniversalNativeResources by tasks.registering {
     outputs.dir(universalNativeResources)
 
     doLast {
-        val inputRoot = prebuiltNativesDirectory.orNull?.asFile ?: throw GradleException(
+        val inputRoot = prebuiltNativesDirectory.orNull ?: throw GradleException(
             "The universal JAR needs the native libraries from the platform builds. " +
-                "Pass -PprebuiltNativesDir=<directory> containing one subdirectory per platform.",
+                "Pass -PprebuiltNativesDir=<directory> or set the LUAU_PREBUILT_NATIVES_DIR " +
+                "environment variable to a directory containing one subdirectory per platform.",
         )
-        check(inputRoot.isDirectory) { "Prebuilt natives directory does not exist: $inputRoot" }
+        check(inputRoot.isDirectory) {
+            "Prebuilt natives directory (prebuiltNativesDir or LUAU_PREBUILT_NATIVES_DIR) does " +
+                "not exist: $inputRoot"
+        }
         val outputRoot = universalNativeResources.get().asFile
         outputRoot.deleteRecursively()
 
@@ -464,5 +472,16 @@ val verifyUniversalJar by tasks.registering {
                 }
             }
         }
+    }
+}
+
+// A configured prebuilt natives directory means every platform of the release is available, so a
+// plain local build assembles the universal JAR and checks it the way a release does.
+if (prebuiltNativesDirectory.isPresent) {
+    tasks.named("build") {
+        dependsOn(universalJar)
+    }
+    tasks.named("check") {
+        dependsOn(verifyUniversalJar)
     }
 }

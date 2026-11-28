@@ -1,17 +1,15 @@
 package io.github.leawind.luau.v1.api;
 
 import io.github.leawind.luau.internal.jni.NativeBindings;
-import io.github.leawind.luau.internal.jni.NativeCompilationDiagnostic;
 import io.github.leawind.luau.internal.jni.NativeLuauException;
+import io.github.leawind.luau.internal.jni.NativeResultDecoder;
 import io.github.leawind.luau.internal.loader.NativePlatform;
 import io.github.leawind.luau.internal.validation.ModuleNames;
 import io.github.leawind.luau.v1.api.compile.CompilationDiagnostic;
 import io.github.leawind.luau.v1.api.compile.CompilationResult;
-import io.github.leawind.luau.v1.api.compile.SourceRange;
 import io.github.leawind.luau.v1.api.host.HostModule;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -211,11 +209,10 @@ public final class LuauRuntime {
     }
 
     try {
-      NativeCompilationDiagnostic[] nativeDiagnostics =
+      var nativeDiagnostics =
           NativeBindings.typecheckModules(rootNameUtf8, typecheckNamesUtf8, typecheckSourcesUtf8);
       if (nativeDiagnostics.length > 0) {
-        return CompilationResult.failure(
-            Arrays.stream(nativeDiagnostics).map(LuauRuntime::decodeDiagnostic).toList());
+        return CompilationResult.failure(NativeResultDecoder.decodeDiagnostics(nativeDiagnostics));
       }
 
       byte[][] bytecodes = new byte[sourcesUtf8.length][];
@@ -238,23 +235,5 @@ public final class LuauRuntime {
       return CompilationResult.failure(
           List.of(CompilationDiagnostic.compileError(rootModuleName, exception.getMessage())));
     }
-  }
-
-  private static CompilationDiagnostic decodeDiagnostic(NativeCompilationDiagnostic diagnostic) {
-    String moduleName = new String(diagnostic.moduleNameUtf8(), StandardCharsets.UTF_8);
-    String message = new String(diagnostic.messageUtf8(), StandardCharsets.UTF_8);
-    SourceRange sourceRange =
-        new SourceRange(
-            diagnostic.startLine(),
-            diagnostic.startColumn(),
-            diagnostic.endLine(),
-            diagnostic.endColumn());
-    return switch (diagnostic.stage()) {
-      case 0 -> CompilationDiagnostic.parseError(moduleName, message, sourceRange);
-      case 1 -> CompilationDiagnostic.typeError(moduleName, message, sourceRange);
-      default ->
-          throw new LinkageError(
-              "Unknown native compilation diagnostic stage: " + diagnostic.stage());
-    };
   }
 }

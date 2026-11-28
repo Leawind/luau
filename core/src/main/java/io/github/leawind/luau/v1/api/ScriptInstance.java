@@ -2,6 +2,7 @@ package io.github.leawind.luau.v1.api;
 
 import io.github.leawind.luau.internal.jni.NativeBindings;
 import io.github.leawind.luau.internal.jni.NativeHostRegistry;
+import io.github.leawind.luau.internal.jni.NativeResultDecoder;
 import io.github.leawind.luau.internal.jni.NativeValueCodec;
 import io.github.leawind.luau.v1.api.debug.PauseInfo;
 import io.github.leawind.luau.v1.api.host.HostCallContext;
@@ -151,7 +152,7 @@ public final class ScriptInstance implements AutoCloseable {
     beginInvocation();
     try {
       ExecutionResult result =
-          CompiledChunk.decodeExecutionResult(
+          NativeResultDecoder.decodeExecutionResult(
               NativeBindings.executeInstance(
                   nativeHandle,
                   hostContext,
@@ -252,7 +253,7 @@ public final class ScriptInstance implements AutoCloseable {
     beginInvocation();
     try {
       ExecutionResult result =
-          CompiledChunk.decodeExecutionResult(
+          NativeResultDecoder.decodeExecutionResult(
               NativeBindings.initializeInstance(
                   nativeHandle,
                   hostContext,
@@ -394,7 +395,7 @@ public final class ScriptInstance implements AutoCloseable {
     beginInvocation();
     try {
       ExecutionResult result =
-          CompiledChunk.decodeExecutionResult(
+          NativeResultDecoder.decodeExecutionResult(
               NativeBindings.invokeExport(
                   nativeHandle,
                   name.getBytes(StandardCharsets.UTF_8),
@@ -631,7 +632,7 @@ public final class ScriptInstance implements AutoCloseable {
     beginInvocation();
     try {
       ExecutionResult result =
-          CompiledChunk.decodeExecutionResult(
+          NativeResultDecoder.decodeExecutionResult(
               NativeBindings.resumeInstance(nativeHandle, hostContext, stepMode));
       result = applyScope(result, scope);
       acceptInvocationResult(result, operation, hostContext, scope);
@@ -652,7 +653,8 @@ public final class ScriptInstance implements AutoCloseable {
     }
 
     ExecutionResult result =
-        CompiledChunk.decodeExecutionResult(NativeBindings.terminatePausedInstance(nativeHandle));
+        NativeResultDecoder.decodeExecutionResult(
+            NativeBindings.terminatePausedInstance(nativeHandle));
     if (!(result instanceof ExecutionResult.Terminated)) {
       faulted = true;
       clearPause();

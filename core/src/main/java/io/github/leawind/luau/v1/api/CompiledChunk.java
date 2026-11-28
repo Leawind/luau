@@ -1,23 +1,15 @@
 package io.github.leawind.luau.v1.api;
 
 import io.github.leawind.luau.internal.jni.NativeBindings;
-import io.github.leawind.luau.internal.jni.NativeExecutionResult;
 import io.github.leawind.luau.internal.jni.NativeHostRegistry;
 import io.github.leawind.luau.internal.jni.NativeLuauException;
-import io.github.leawind.luau.internal.jni.NativePauseInfo;
-import io.github.leawind.luau.internal.jni.NativeStackFrame;
-import io.github.leawind.luau.internal.jni.NativeValueCodec;
-import io.github.leawind.luau.v1.api.debug.PauseInfo;
-import io.github.leawind.luau.v1.api.debug.SourceLocation;
-import io.github.leawind.luau.v1.api.debug.StackFrame;
+import io.github.leawind.luau.internal.jni.NativeResultDecoder;
 import io.github.leawind.luau.v1.api.host.HostCallContext;
 import io.github.leawind.luau.v1.api.host.HostModule;
 import io.github.leawind.luau.v1.api.runtime.ExecutionBudget;
-import io.github.leawind.luau.v1.api.runtime.ExecutionMetrics;
 import io.github.leawind.luau.v1.api.runtime.ExecutionResult;
 import io.github.leawind.luau.v1.api.runtime.InstanceConfig;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -163,7 +155,7 @@ public final class CompiledChunk implements AutoCloseable {
     Objects.requireNonNull(budget, "budget");
 
     try {
-      NativeExecutionResult result =
+      var result =
           NativeBindings.execute(
               rootModuleNameUtf8,
               moduleNamesUtf8,
@@ -175,7 +167,7 @@ public final class CompiledChunk implements AutoCloseable {
               budget.maxHostCalls(),
               budget.maxHostOutputBytes(),
               DEFAULT_MAX_MEMORY_BYTES);
-      return decodeExecutionResult(result);
+      return NativeResultDecoder.decodeExecutionResult(result);
     } catch (NativeLuauException exception) {
       throw new IllegalStateException("Native Luau execution boundary failed", exception);
     }
@@ -208,75 +200,6 @@ public final class CompiledChunk implements AutoCloseable {
     Objects.requireNonNull(config, "config");
     return new ScriptInstance(
         rootModuleNameUtf8, moduleNamesUtf8, bytecodes, hostModules, config.maxMemoryBytes());
-  }
-
-  static ExecutionResult decodeExecutionResult(NativeExecutionResult result) {
-    ExecutionMetrics metrics =
-        new ExecutionMetrics(
-            Duration.ofNanos(result.elapsedNanos()),
-            result.interruptChecks(),
-            result.currentMemoryBytes(),
-            result.peakMemoryBytes(),
-            result.hostCalls(),
-            result.hostOutputBytes());
-    String message =
-        result.messageUtf8() == null
-            ? ""
-            : new String(result.messageUtf8(), StandardCharsets.UTF_8);
-    return switch (result.status()) {
-      case 0 ->
-          new ExecutionResult.Completed(
-              NativeValueCodec.fromNativeValues(result.values()), metrics);
-      case 1 -> new ExecutionResult.RuntimeFailed(message, metrics);
-      case 2 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.RUNTIME, message, metrics);
-      case 3 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.INTERRUPT_CHECKS, message, metrics);
-      case 4 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.MEMORY, message, metrics);
-      case 5 -> new ExecutionResult.RuntimeFailed(message, metrics);
-      case 6 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.VALUE_CODEC, message, metrics);
-      case 7 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.HOST_CALLS, message, metrics);
-      case 8 ->
-          new ExecutionResult.LimitExceeded(
-              ExecutionResult.LimitExceeded.Kind.HOST_OUTPUT, message, metrics);
-      case 9 -> new ExecutionResult.Paused(decodePauseInfo(result.pauseInfo()), metrics);
-      case 10 -> new ExecutionResult.Terminated(message, metrics);
-      default -> throw new LinkageError("Unknown native execution status: " + result.status());
-    };
-  }
-
-  private static PauseInfo decodePauseInfo(NativePauseInfo nativePause) {
-    if (nativePause == null) {
-      throw new LinkageError("Native paused execution did not include pause information");
-    }
-    PauseInfo.Reason reason =
-        switch (nativePause.reason()) {
-          case 0 -> PauseInfo.Reason.BREAKPOINT;
-          case 1 -> PauseInfo.Reason.REQUESTED;
-          case 2 -> PauseInfo.Reason.STEP;
-          default -> throw new LinkageError("Unknown native pause reason: " + nativePause.reason());
-        };
-    SourceLocation location =
-        new SourceLocation(
-            new String(nativePause.moduleNameUtf8(), StandardCharsets.UTF_8), nativePause.line());
-    List<StackFrame> frames =
-        Arrays.stream(nativePause.stackFrames()).map(CompiledChunk::decodeStackFrame).toList();
-    return new PauseInfo(reason, location, frames);
-  }
-
-  private static StackFrame decodeStackFrame(NativeStackFrame frame) {
-    return new StackFrame(
-        new SourceLocation(
-            new String(frame.moduleNameUtf8(), StandardCharsets.UTF_8), frame.line()),
-        new String(frame.functionNameUtf8(), StandardCharsets.UTF_8));
   }
 
   /**

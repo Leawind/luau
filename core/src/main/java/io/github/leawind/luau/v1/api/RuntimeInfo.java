@@ -3,7 +3,7 @@ package io.github.leawind.luau.v1.api;
 /**
  * Immutable version information for the loaded Java and native runtime.
  *
- * @param runtimeVersion Luau Runtime Mod version
+ * @param runtimeVersion the version of this library
  * @param luauVersion pinned upstream Luau version
  * @param luauCommit pinned upstream Luau commit
  * @param jniAbiVersion Java/native ABI version

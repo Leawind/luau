@@ -7,8 +7,8 @@ plugins {
     id("com.diffplug.spotless") version "8.12.0"
 }
 
-group = providers.gradleProperty("mod.group").get()
-version = providers.gradleProperty("mod.version").get()
+group = providers.gradleProperty("luau.group").get()
+version = providers.gradleProperty("luau.artifactVersion").get()
 
 /**
  * Name of the published library. The archive name and the Maven artifact id both come from here,
@@ -700,7 +700,7 @@ tasks.jar {
 
     manifest {
         attributes(
-            "Implementation-Title" to "Luau Runtime",
+            "Implementation-Title" to "luau",
             "Implementation-Version" to version,
             "Luau-Version" to luauVersion,
             "Luau-Commit" to luauCommit,
@@ -715,32 +715,31 @@ publishing {
             from(components["java"])
             artifactId = artifactName
             pom {
-                name.set("Luau Runtime")
+                name.set(providers.gradleProperty("luau.name").get())
                 description.set(
-                    "Sandboxed Luau runtime for the JVM, with the native library bundled for " +
-                        "every supported platform.",
+                    providers.gradleProperty("luau.description").get(),
                 )
-                url.set(providers.gradleProperty("mod.homepage").get())
+                url.set(providers.gradleProperty("luau.homepage").get())
                 licenses {
                     license {
-                        name.set(providers.gradleProperty("mod.license").get())
+                        name.set(providers.gradleProperty("luau.license").get())
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
                 developers {
                     developer {
-                        id.set("Leawind")
-                        name.set(providers.gradleProperty("mod.author").get())
+                        id.set(providers.gradleProperty("luau.author").get())
+                        name.set(providers.gradleProperty("luau.author").get())
                     }
                 }
                 scm {
-                    connection.set("scm:git:${providers.gradleProperty("mod.sources").get()}.git")
-                    developerConnection.set("scm:git:${providers.gradleProperty("mod.sources").get()}.git")
-                    url.set(providers.gradleProperty("mod.sources").get())
+                    connection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
+                    developerConnection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
+                    url.set(providers.gradleProperty("luau.sources").get())
                 }
                 issueManagement {
                     system.set("GitHub")
-                    url.set(providers.gradleProperty("mod.issues").get())
+                    url.set(providers.gradleProperty("luau.issues").get())
                 }
             }
         }

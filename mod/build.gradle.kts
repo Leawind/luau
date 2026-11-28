@@ -8,8 +8,10 @@ plugins {
     `java-library`
 }
 
-group = providers.gradleProperty("mod.group").get()
-version = providers.gradleProperty("mod.version").get()
+// The mod is the library's packaging and is released from the same tag, so it takes the
+// library's coordinates rather than keeping its own.
+group = providers.gradleProperty("luau.group").get()
+version = providers.gradleProperty("luau.artifactVersion").get()
 
 val modId = providers.gradleProperty("mod.id").get()
 val modName = providers.gradleProperty("mod.name").get()

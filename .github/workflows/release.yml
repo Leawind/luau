@@ -126,7 +126,7 @@ jobs:
         id: release_metadata
         shell: bash
         run: |
-          project_version="$(sed -n 's/^mod.version=//p' gradle.properties)"
+          project_version="$(sed -n 's/^luau.artifactVersion=//p' gradle.properties)"
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             test "${GITHUB_REF_NAME}" = "v${project_version}"
           fi

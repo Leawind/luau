@@ -65,6 +65,11 @@ fun sha256(bytes: ByteArray): String =
 
 fun sha256(file: File): String = sha256(file.readBytes())
 
+/** Reads a properties file this build wrote, keyed by name and with its values taken verbatim. */
+fun readProperties(file: File): Map<String, String> = file.readLines()
+    .filter { it.isNotBlank() }
+    .associate { it.substringBefore('=') to it.substringAfter('=') }
+
 tasks.processResources {
     val properties = mapOf(
         "id" to modId,
@@ -176,9 +181,52 @@ val prebuiltNativesDirectory = providers.gradleProperty("prebuiltNativesDir")
     .map { rootProject.layout.projectDirectory.dir(it) }
 val universalNativeResources = layout.buildDirectory.dir("generated/universal-native-resources")
 
+/**
+ * File the platform builds put next to the library, recording the sources it was built from. The
+ * core module writes it in its own distribution staging, so the name is duplicated there.
+ */
+val nativeProvenanceFileName = "native.properties"
+
+/** The fingerprint of the current native sources, and the task that writes it. */
+val coreFingerprintFile = project(":core").layout.buildDirectory.file("native/fingerprint.properties")
+val coreWriteNativeFingerprint = project(":core").tasks.named("writeNativeFingerprint")
+
+/**
+ * Rejects a prebuilt library that cannot be matched to the current native sources. Both the platform
+ * and the source fingerprint have to agree; a mismatch means the library was produced by another
+ * checkout and can differ from what this build would compile.
+ */
+fun requireProvenance(platformDir: File, platform: String, expectedFingerprint: String) {
+    val provenanceFile = platformDir.resolve(nativeProvenanceFileName)
+    if (!provenanceFile.isFile) {
+        throw GradleException(
+            "The $platform native library has no $nativeProvenanceFileName beside it, so it " +
+                "cannot be matched to the current native sources (expected fingerprint " +
+                "$expectedFingerprint). Rebuild the $platform native library from the current sources.",
+        )
+    }
+    val provenance = readProperties(provenanceFile)
+    val declaredPlatform = provenance["platform"]
+    if (declaredPlatform != platform) {
+        throw GradleException(
+            "The native library in $platformDir records platform $declaredPlatform, but the " +
+                "directory is $platform. Rebuild the $platform native library from the current sources.",
+        )
+    }
+    val declaredFingerprint = provenance["fingerprint"]
+    if (declaredFingerprint != expectedFingerprint) {
+        throw GradleException(
+            "The $platform native library was built from other native sources: it recorded " +
+                "$declaredFingerprint, but the current sources fingerprint to $expectedFingerprint. " +
+                "Rebuild the $platform native library from the current sources.",
+        )
+    }
+}
+
 val stageUniversalNativeResources by tasks.registering {
     group = "native"
     description = "Stages all release native libraries supplied by CI."
+    dependsOn(coreWriteNativeFingerprint)
 
     // The manifest records these values, so changing one has to rewrite it instead of leaving the
     // previous values in an output Gradle considers up to date.
@@ -191,6 +239,8 @@ val stageUniversalNativeResources by tasks.registering {
     if (prebuiltNatives != null) {
         inputs.dir(prebuiltNatives)
     }
+    // A prebuilt library is only accepted when it was built from the sources in this checkout.
+    inputs.file(coreFingerprintFile)
     outputs.dir(universalNativeResources)
 
     doLast {
@@ -202,9 +252,12 @@ val stageUniversalNativeResources by tasks.registering {
         val outputRoot = universalNativeResources.get().asFile
         outputRoot.deleteRecursively()
 
+        val expectedFingerprint = readProperties(coreFingerprintFile.get().asFile).getValue("fingerprint")
+
         val manifestLines = mutableListOf("platforms=${releasePlatforms.joinToString(",")}")
         for (platform in releasePlatforms) {
             val platformDir = inputRoot.resolve(platform)
+            requireProvenance(platformDir, platform, expectedFingerprint)
             val os = platform.substringBefore('-')
             val libraryName = nativeLibraryName(os)
             val source = platformDir.resolve(libraryName)

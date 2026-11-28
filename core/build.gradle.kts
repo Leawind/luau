@@ -1,3 +1,4 @@
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import org.gradle.external.javadoc.StandardJavadocDocletOptions
 
@@ -140,6 +141,11 @@ fun sha256(file: File): String {
     }
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
+
+/** Reads a properties file this build wrote, keyed by name and with its values taken verbatim. */
+fun readProperties(file: File): Map<String, String> = file.readLines()
+    .filter { it.isNotBlank() }
+    .associate { it.substringBefore('=') to it.substringAfter('=') }
 
 val hostOs = normalizedOs()
 val hostArch = normalizedArch()
@@ -340,13 +346,45 @@ val buildNative by tasks.registering(Exec::class) {
 
 val nativeDistributionDirectory = layout.buildDirectory.dir("native/dist")
 
+/**
+ * Name of the file that travels next to the native library in [nativeDistributionDirectory] and
+ * records what the library was built from. The packaging of the universal JAR reads it back.
+ */
+val nativeProvenanceFileName = "native.properties"
+
+/** What the native library was built from, as written by [writeNativeFingerprint]. */
+val nativeFingerprintFile = layout.buildDirectory.file("native/fingerprint.properties")
+
 val stageNativeDistribution by tasks.registering(Sync::class) {
     group = "native"
-    description = "Stages the current platform native library alone in a clean directory for CI upload."
-    dependsOn(buildNative)
+    description = "Stages the current platform native library and its provenance for CI upload."
+    dependsOn(buildNative, writeNativeFingerprint)
+
+    // The provenance file records these values, so changing one has to rewrite it instead of
+    // leaving the previous one in place.
+    inputs.property("platform", hostPlatform)
+    inputs.property("luauVersion", luauVersion)
+    inputs.property("luauCommit", luauCommit)
+    inputs.property("jniAbiVersion", jniAbiVersion)
+    inputs.file(nativeFingerprintFile)
 
     into(nativeDistributionDirectory)
     from(nativeLibrary)
+
+    doLast {
+        val fingerprint = readProperties(nativeFingerprintFile.get().asFile).getValue("fingerprint")
+        val provenance = nativeDistributionDirectory.get().file(nativeProvenanceFileName).asFile
+        provenance.parentFile.mkdirs()
+        provenance.writeText(
+            """
+            platform=$hostPlatform
+            fingerprint=$fingerprint
+            luauVersion=$luauVersion
+            luauCommit=$luauCommit
+            jniAbiVersion=$jniAbiVersion
+            """.trimIndent() + "\n",
+        )
+    }
 }
 
 tasks.named("build") {
@@ -477,6 +515,73 @@ val validateLuauSubmoduleCommit by tasks.registering {
             "luau.commit in gradle.properties is $luauCommit but native/luau is at $head. " +
                 "Check out the submodule commit that should ship, or update luau.commit."
         }
+    }
+}
+
+/**
+ * The files under `native/` that end up in the native library: the CMake project and the JNI
+ * sources. The vendored Luau tree is identified by its commit instead of its content, and
+ * `native/.clang-format` only formats sources that this task fingerprints anyway.
+ */
+val nativeSourceFiles = fileTree(nativeDirectory) {
+    exclude("luau/**")
+    exclude(".clang-format")
+}
+
+/**
+ * Digests everything that decides what the native library contains, so a prebuilt library can be
+ * matched to the sources it was built from. A version number cannot express that: it moves for
+ * Java changes the binary never sees, and a C++ change can land without one.
+ */
+val writeNativeFingerprint by tasks.registering {
+    group = "native"
+    description = "Digests the sources the native library is built from."
+    // The guard above proves luau.commit is the checked out submodule, so digesting the property
+    // is the same as digesting the tree that will be compiled.
+    dependsOn(validateLuauSubmoduleCommit)
+
+    inputs.files(nativeSourceFiles).withPropertyName("nativeSources")
+    // Every compile definition and every CMake switch is passed from this script.
+    inputs.file(layout.projectDirectory.file("build.gradle.kts"))
+    inputs.property("luauVersion", luauVersion)
+    inputs.property("luauCommit", luauCommit)
+    inputs.property("jniAbiVersion", jniAbiVersion)
+    outputs.file(nativeFingerprintFile)
+
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-256")
+
+        fun feed(name: String, content: ByteArray) {
+            digest.update(name.toByteArray(StandardCharsets.UTF_8))
+            digest.update(0)
+            digest.update(content)
+            digest.update(0)
+        }
+
+        fun feed(name: String, value: String) = feed(name, value.toByteArray(StandardCharsets.UTF_8))
+
+        val nativeRoot = nativeDirectory.asFile
+        val sources = nativeSourceFiles.files.sortedBy {
+            it.relativeTo(nativeRoot).invariantSeparatorsPath
+        }
+        for (source in sources) {
+            feed(source.relativeTo(nativeRoot).invariantSeparatorsPath, source.readBytes())
+        }
+        feed("luau.commit", luauCommit)
+        feed("luau.version", luauVersion)
+        feed("luau.jniAbiVersion", jniAbiVersion)
+        feed("core/build.gradle.kts", layout.projectDirectory.file("build.gradle.kts").asFile.readBytes())
+
+        val output = nativeFingerprintFile.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            """
+            fingerprint=${digest.digest().joinToString("") { "%02x".format(it) }}
+            luauVersion=$luauVersion
+            luauCommit=$luauCommit
+            jniAbiVersion=$jniAbiVersion
+            """.trimIndent() + "\n",
+        )
     }
 }
 

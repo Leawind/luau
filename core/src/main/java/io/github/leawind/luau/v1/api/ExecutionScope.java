@@ -16,6 +16,15 @@ public final class ExecutionScope {
   private final ExecutionBudget budget;
   private ExecutionMetrics metrics = new ExecutionMetrics(Duration.ZERO, 0, 0, 0, 0, 0);
 
+  /**
+   * Creates a scope that shares one budget among its invocations.
+   *
+   * <p>The scope starts with the budget untouched; each invocation consumes its own usage from it
+   * before the next invocation runs.
+   *
+   * @param budget the total budget of the whole operation
+   * @throws NullPointerException if {@code budget} is null
+   */
   public ExecutionScope(ExecutionBudget budget) {
     this.budget = Objects.requireNonNull(budget, "budget");
   }

@@ -20,8 +20,15 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /**
  * An isolated persistent Luau VM.
  *
- * <p>Mutable globals and required-module caches survive successful calls without being shared
+ * <p>Mutable globals and required-module caches survive successful calls and are never shared
  * between instances.
+ *
+ * <p>An instance belongs to the thread that created it and rejects calls from any other thread.
+ * Before initialization it runs its root chunk with {@code execute}; after it, the stored export
+ * table is reached through {@code invokeExport}, and initializing again is rejected. A failed
+ * invocation faults the instance, which then rejects every call until it is reset or closed. A
+ * debugger pause keeps the invoked coroutine alive and makes the instance reject other calls
+ * meanwhile.
  */
 public final class ScriptInstance implements AutoCloseable {
   private final Thread ownerThread;
@@ -64,23 +71,60 @@ public final class ScriptInstance implements AutoCloseable {
     this.debugger = new ScriptDebugger(this);
   }
 
+  /**
+   * Runs the root chunk once with an empty host context and the default budget.
+   *
+   * <p>The export table the chunk returns is discarded; use {@link #initialize()} to keep it for
+   * {@link #invokeExport}.
+   *
+   * @return the execution result
+   */
   public synchronized ExecutionResult execute() {
     return execute(HostCallContext.empty(), ExecutionBudget.DEFAULT);
   }
 
+  /**
+   * Runs the root chunk once with an empty host context and an explicit budget.
+   *
+   * @param budget the limits for this invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult execute(ExecutionBudget budget) {
     return execute(HostCallContext.empty(), budget);
   }
 
+  /**
+   * Runs the root chunk once with Java-only host capabilities and the default budget.
+   *
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult execute(HostCallContext hostContext) {
     return execute(hostContext, ExecutionBudget.DEFAULT);
   }
 
+  /**
+   * Runs the root chunk once with explicit host capabilities and limits.
+   *
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @param budget the limits for this invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult execute(HostCallContext hostContext, ExecutionBudget budget) {
     return executeInternal(hostContext, budget, null);
   }
 
-  /** Executes the root chunk as part of a logical operation with a shared budget. */
+  /**
+   * Runs the root chunk once as part of a logical operation with a shared budget.
+   *
+   * <p>Only the budget that remains in the scope is applied. When the scope is already exhausted,
+   * the call returns a {@link ExecutionResult.LimitExceeded} result without entering Luau and
+   * faults the instance.
+   *
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @param scope the operation whose remaining budget this invocation consumes
+   * @return the execution result
+   */
   public synchronized ExecutionResult execute(HostCallContext hostContext, ExecutionScope scope) {
     return executeInternal(hostContext, null, scope);
   }
@@ -126,28 +170,61 @@ public final class ScriptInstance implements AutoCloseable {
     }
   }
 
-  /** Executes the root chunk once and stores its returned export table. */
+  /**
+   * Runs the root chunk once, keeps its export table, and marks the instance initialized.
+   *
+   * <p>The table has to be a Luau table; its fields are then reachable through {@link
+   * #invokeExport(String, List)} until the instance is reset or closed.
+   *
+   * @return the execution result
+   */
   public synchronized ExecutionResult initialize() {
     return initialize(HostCallContext.empty(), ExecutionBudget.DEFAULT);
   }
 
-  /** Executes the root chunk once under the supplied initialization budget. */
+  /**
+   * Initializes the instance with an explicit initialization budget.
+   *
+   * @param budget the limits for the initialization invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult initialize(ExecutionBudget budget) {
     return initialize(HostCallContext.empty(), budget);
   }
 
-  /** Executes the root chunk once with Java-only host capabilities and default limits. */
+  /**
+   * Initializes the instance with Java-only host capabilities and the default budget.
+   *
+   * @param hostContext the capabilities passed to every host call of the invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult initialize(HostCallContext hostContext) {
     return initialize(hostContext, ExecutionBudget.DEFAULT);
   }
 
-  /** Executes the root chunk once with explicit host capabilities and resource limits. */
+  /**
+   * Initializes the instance with explicit host capabilities and limits.
+   *
+   * @param hostContext the capabilities passed to every host call of the invocation
+   * @param budget the limits for the initialization invocation
+   * @return the execution result
+   */
   public synchronized ExecutionResult initialize(
       HostCallContext hostContext, ExecutionBudget budget) {
     return initializeInternal(hostContext, budget, null);
   }
 
-  /** Executes the root chunk once as part of a logical operation with a shared budget. */
+  /**
+   * Initializes the instance as part of a logical operation with a shared budget.
+   *
+   * <p>Only the budget that remains in the scope is applied. When the scope is already exhausted,
+   * the call returns a {@link ExecutionResult.LimitExceeded} result without entering Luau and
+   * faults the instance.
+   *
+   * @param hostContext the capabilities passed to every host call of the invocation
+   * @param scope the operation whose remaining budget this invocation consumes
+   * @return the execution result
+   */
   public synchronized ExecutionResult initialize(
       HostCallContext hostContext, ExecutionScope scope) {
     return initializeInternal(hostContext, null, scope);
@@ -194,30 +271,95 @@ public final class ScriptInstance implements AutoCloseable {
     }
   }
 
-  /** Invokes a function from the root module's export table. */
+  /**
+   * Invokes a function from the root module's stored export table.
+   *
+   * @param name the field name in the export table
+   * @param arguments the arguments to pass, in order
+   * @return the execution result
+   * @throws IllegalArgumentException if the name is blank, longer than 256 characters or contains
+   *     NUL
+   * @throws IllegalStateException if the instance is not initialized, closed, faulted, executing or
+   *     paused
+   * @throws NullPointerException if an argument is null or {@code arguments} contains null
+   */
   public synchronized ExecutionResult invokeExport(String name, List<LuauValue> arguments) {
     return invokeExport(name, arguments, HostCallContext.empty(), ExecutionBudget.DEFAULT);
   }
 
-  /** Invokes an exported function under an explicit execution budget. */
+  /**
+   * Invokes an exported function with an explicit budget.
+   *
+   * @param name the field name in the export table
+   * @param arguments the arguments to pass, in order
+   * @param budget the limits for this invocation
+   * @return the execution result
+   * @throws IllegalArgumentException if the name is blank, longer than 256 characters or contains
+   *     NUL
+   * @throws IllegalStateException if the instance is not initialized, closed, faulted, executing or
+   *     paused
+   * @throws NullPointerException if an argument is null or {@code arguments} contains null
+   */
   public synchronized ExecutionResult invokeExport(
       String name, List<LuauValue> arguments, ExecutionBudget budget) {
     return invokeExport(name, arguments, HostCallContext.empty(), budget);
   }
 
-  /** Invokes an exported function with Java-only host capabilities and default limits. */
+  /**
+   * Invokes an exported function with Java-only host capabilities.
+   *
+   * @param name the field name in the export table
+   * @param arguments the arguments to pass, in order
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @return the execution result
+   * @throws IllegalArgumentException if the name is blank, longer than 256 characters or contains
+   *     NUL
+   * @throws IllegalStateException if the instance is not initialized, closed, faulted, executing or
+   *     paused
+   * @throws NullPointerException if an argument is null or {@code arguments} contains null
+   */
   public synchronized ExecutionResult invokeExport(
       String name, List<LuauValue> arguments, HostCallContext hostContext) {
     return invokeExport(name, arguments, hostContext, ExecutionBudget.DEFAULT);
   }
 
-  /** Invokes an exported function with explicit host capabilities and resource limits. */
+  /**
+   * Invokes an exported function with explicit host capabilities and limits.
+   *
+   * @param name the field name in the export table
+   * @param arguments the arguments to pass, in order
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @param budget the limits for this invocation
+   * @return the execution result
+   * @throws IllegalArgumentException if the name is blank, longer than 256 characters or contains
+   *     NUL
+   * @throws IllegalStateException if the instance is not initialized, closed, faulted, executing or
+   *     paused
+   * @throws NullPointerException if an argument is null or {@code arguments} contains null
+   */
   public synchronized ExecutionResult invokeExport(
       String name, List<LuauValue> arguments, HostCallContext hostContext, ExecutionBudget budget) {
     return invokeExportInternal(name, arguments, hostContext, budget, null);
   }
 
-  /** Invokes an exported function as part of a logical operation with a shared budget. */
+  /**
+   * Invokes an exported function as part of a logical operation with a shared budget.
+   *
+   * <p>Only the budget that remains in the scope is applied. When the scope is already exhausted,
+   * the call returns a {@link ExecutionResult.LimitExceeded} result without entering Luau and
+   * faults the instance.
+   *
+   * @param name the field name in the export table
+   * @param arguments the arguments to pass, in order
+   * @param hostContext the capabilities passed to every host call of this invocation
+   * @param scope the operation whose remaining budget this invocation consumes
+   * @return the execution result
+   * @throws IllegalArgumentException if the name is blank, longer than 256 characters or contains
+   *     NUL
+   * @throws IllegalStateException if the instance is not initialized, closed, faulted, executing or
+   *     paused
+   * @throws NullPointerException if an argument is null or {@code arguments} contains null
+   */
   public synchronized ExecutionResult invokeExport(
       String name, List<LuauValue> arguments, HostCallContext hostContext, ExecutionScope scope) {
     return invokeExportInternal(name, arguments, hostContext, null, scope);
@@ -273,6 +415,12 @@ public final class ScriptInstance implements AutoCloseable {
     }
   }
 
+  /**
+   * Returns whether the VM rejected an invocation and now requires a reset.
+   *
+   * @return {@code true} when every invocation is refused until the instance is reset
+   * @throws IllegalStateException if the instance is closed or called from another thread
+   */
   public synchronized boolean isFaulted() {
     checkOwnerThread();
     if (nativeHandle == 0) {
@@ -281,16 +429,37 @@ public final class ScriptInstance implements AutoCloseable {
     return faulted;
   }
 
+  /**
+   * Returns the thread this instance belongs to.
+   *
+   * @return the thread that created the instance
+   */
   public Thread ownerThread() {
     return ownerThread;
   }
 
-  /** Returns the owner-thread debugger associated with this instance. */
+  /**
+   * Returns the debugger bound to this instance.
+   *
+   * <p>The debugger accepts calls only from the owner thread and only while the instance is idle or
+   * paused.
+   *
+   * @return the owner-thread debugger of this instance
+   */
   public ScriptDebugger debugger() {
     return debugger;
   }
 
-  /** Replaces a faulted or healthy VM with a clean VM using the same compiled chunk. */
+  /**
+   * Replaces the VM with a clean one built from the same compiled bytecode.
+   *
+   * <p>Globals, module caches and the export table are dropped, the fault flag and the initialized
+   * flag are cleared, and resolved breakpoints are carried over to the new VM. The instance stays
+   * usable from its owner thread only.
+   *
+   * @throws IllegalStateException if the instance is closed, still executing, paused in the
+   *     debugger, or called from another thread
+   */
   public synchronized void reset() {
     checkOwnerThread();
     if (nativeHandle == 0) {
@@ -322,6 +491,14 @@ public final class ScriptInstance implements AutoCloseable {
     }
   }
 
+  /**
+   * Closes the underlying VM and wipes the bytecode held by this instance.
+   *
+   * <p>Closing twice has no effect. A paused invocation is not terminated by closing; the instance
+   * has to be idle.
+   *
+   * @throws IllegalStateException if the instance is still executing or called from another thread
+   */
   @Override
   public synchronized void close() {
     checkOwnerThread();

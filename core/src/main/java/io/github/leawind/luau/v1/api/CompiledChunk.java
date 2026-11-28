@@ -26,7 +26,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** An opaque compiled program containing a trusted root chunk and its source modules. */
+/**
+ * An opaque compiled program containing a trusted root chunk and its source modules.
+ *
+ * <p>A chunk runs either on its own, in a fresh VM whose state is discarded afterwards, or through
+ * instances that keep one VM and its globals alive across calls. Closing the chunk wipes the
+ * embedded bytecode, after which it can no longer execute or create instances.
+ */
 public final class CompiledChunk implements AutoCloseable {
   private static final long DEFAULT_MAX_MEMORY_BYTES = 64L * 1024 * 1024;
 
@@ -67,42 +73,88 @@ public final class CompiledChunk implements AutoCloseable {
     this.hostModuleVersions = Map.copyOf(hostVersions);
   }
 
-  /** Returns the logical name of the root module. */
+  /**
+   * Returns the logical name of the root module.
+   *
+   * @return the root module name
+   */
   public String chunkName() {
     return chunkName;
   }
 
-  /** Returns all source modules embedded in this compiled program. */
+  /**
+   * Returns all source modules embedded in this compiled program.
+   *
+   * @return an immutable set of logical module names
+   */
   public Set<String> moduleNames() {
     return moduleNames;
   }
 
-  /** Returns all explicitly granted host module names. */
+  /**
+   * Returns all host modules this program was compiled against.
+   *
+   * @return an immutable set of logical module names
+   */
   public Set<String> hostModuleNames() {
     return hostModuleNames;
   }
 
-  /** Returns the interface version retained for each explicitly granted host module. */
+  /**
+   * Returns the interface version retained for each host module.
+   *
+   * @return an immutable map from host module name to its interface version
+   */
   public Map<String, String> hostModuleVersions() {
     return hostModuleVersions;
   }
 
-  /** Executes the root module in a fresh isolated and sandboxed Luau state. */
+  /**
+   * Executes the root module in a fresh isolated and sandboxed VM.
+   *
+   * <p>The VM limits its heap to 64 MiB and is discarded afterwards, so nothing it creates survives
+   * the call.
+   *
+   * @return the execution result
+   * @throws IllegalStateException if the chunk is closed, or the native execution boundary fails
+   */
   public synchronized ExecutionResult execute() {
     return execute(HostCallContext.empty(), ExecutionBudget.DEFAULT);
   }
 
-  /** Executes the root module with explicit wall-clock and interrupt-check limits. */
+  /**
+   * Executes the root module in a fresh VM with an explicit execution budget.
+   *
+   * @param budget the limits for this execution
+   * @return the execution result
+   * @throws IllegalStateException if the chunk is closed, or the native execution boundary fails
+   * @throws NullPointerException if {@code budget} is null
+   */
   public synchronized ExecutionResult execute(ExecutionBudget budget) {
     return execute(HostCallContext.empty(), budget);
   }
 
-  /** Executes the root module with Java-only host capabilities and default limits. */
+  /**
+   * Executes the root module in a fresh VM with Java-only host capabilities.
+   *
+   * @param hostContext the capabilities passed to every host call of this execution
+   * @return the execution result
+   * @throws IllegalStateException if the chunk is closed, or the native execution boundary fails
+   * @throws NullPointerException if {@code hostContext} is null
+   */
   public synchronized ExecutionResult execute(HostCallContext hostContext) {
     return execute(hostContext, ExecutionBudget.DEFAULT);
   }
 
-  /** Executes the root module with explicit host capabilities and resource limits. */
+  /**
+   * Executes the root module in a fresh VM with explicit host capabilities and limits.
+   *
+   * @param hostContext the capabilities passed to every host call of this execution
+   * @param budget the limits for this execution
+   * @return the execution result
+   * @throws IllegalStateException if the chunk is closed, or the native execution boundary fails
+   * @throws NullPointerException if an argument is null
+   */
   public synchronized ExecutionResult execute(HostCallContext hostContext, ExecutionBudget budget) {
     if (bytecodes == null) {
       throw new IllegalStateException("Compiled chunk is closed");
@@ -129,12 +181,26 @@ public final class CompiledChunk implements AutoCloseable {
     }
   }
 
-  /** Creates an isolated VM whose mutable globals survive successful executions. */
+  /**
+   * Creates an isolated VM whose mutable globals survive successful calls.
+   *
+   * <p>The instance belongs to the calling thread and starts with a 64 MiB heap limit.
+   *
+   * @return a new instance owned by the calling thread
+   * @throws IllegalStateException if the chunk is closed
+   */
   public synchronized ScriptInstance createInstance() {
     return createInstance(InstanceConfig.DEFAULT);
   }
 
-  /** Creates an isolated VM with a fixed hard heap limit. */
+  /**
+   * Creates an isolated VM with a fixed heap limit.
+   *
+   * @param config the configuration fixed for the lifetime of the instance
+   * @return a new instance owned by the calling thread
+   * @throws IllegalStateException if the chunk is closed
+   * @throws NullPointerException if {@code config} is null
+   */
   public synchronized ScriptInstance createInstance(InstanceConfig config) {
     if (bytecodes == null) {
       throw new IllegalStateException("Compiled chunk is closed");
@@ -213,6 +279,11 @@ public final class CompiledChunk implements AutoCloseable {
         new String(frame.functionNameUtf8(), StandardCharsets.UTF_8));
   }
 
+  /**
+   * Wipes the embedded bytecode so the program can no longer run.
+   *
+   * <p>Closing twice has no effect, and instances created earlier keep their own copy.
+   */
   @Override
   public synchronized void close() {
     if (bytecodes != null) {

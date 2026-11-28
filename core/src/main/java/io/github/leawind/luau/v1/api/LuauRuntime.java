@@ -17,7 +17,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/** Entry point for compiling and executing sandboxed Luau code. */
+/**
+ * Entry point for compiling and executing sandboxed Luau code.
+ *
+ * <p>The runtime is a process-wide facade without mutable state, so every call is independent and
+ * every {@link ScriptInstance} owns its own VM.
+ *
+ * <p>The native library is loaded and verified on first use. A platform this build does not bundle,
+ * and a library that fails size or digest verification, fail the call with an unchecked exception
+ * instead of a result.
+ */
 public final class LuauRuntime {
   private static final int MAX_MODULES = 64;
   private static final int MAX_SOURCE_BYTES = 1024 * 1024;
@@ -26,12 +35,23 @@ public final class LuauRuntime {
 
   private LuauRuntime() {}
 
-  /** Returns the process-wide runtime facade. */
+  /**
+   * Returns the process-wide runtime facade.
+   *
+   * <p>This method does not load the native library.
+   *
+   * @return the shared runtime
+   */
   public static LuauRuntime getInstance() {
     return INSTANCE;
   }
 
-  /** Returns version information after loading and validating the native library. */
+  /**
+   * Returns version information, loading and validating the native library first.
+   *
+   * @return the library version, the Luau version, the native ABI version and the detected platform
+   *     identifier
+   */
   public RuntimeInfo info() {
     return new RuntimeInfo(
         NativeBindings.runtimeVersion(),
@@ -41,16 +61,28 @@ public final class LuauRuntime {
         NativePlatform.current().id());
   }
 
-  /** Compiles source using the default chunk name. */
+  /**
+   * Compiles one source text under the default chunk name.
+   *
+   * @param source the Luau source text
+   * @return the compilation result
+   */
   public CompilationResult compile(String source) {
     return compile("main", source);
   }
 
   /**
-   * Compiles a single in-memory Luau chunk.
+   * Compiles one in-memory Luau chunk.
    *
-   * <p>Syntax and compile errors are returned as diagnostics. Invalid Java API arguments still
-   * throw {@link IllegalArgumentException}.
+   * <p>Syntax, type and compile errors are returned as diagnostics rather than thrown.
+   *
+   * @param chunkName the logical module name of the chunk, which is also the name its export table
+   *     and breakpoints use
+   * @param source the Luau source text, at most 1 MiB once encoded as UTF-8
+   * @return the compilation result
+   * @throws IllegalArgumentException if the chunk name is not a valid logical module name, or the
+   *     source is not well-formed UTF-16 or exceeds the size limit
+   * @throws NullPointerException if an argument is null
    */
   public CompilationResult compile(String chunkName, String source) {
     ModuleNames.requireValid(chunkName);
@@ -59,21 +91,37 @@ public final class LuauRuntime {
   }
 
   /**
-   * Compiles a closed set of in-memory source modules.
+   * Compiles a closed set of in-memory source modules without host modules.
    *
-   * <p>{@code require("name")} performs an exact lookup in {@code sources}; module names are
-   * logical identifiers and never resolve through the filesystem or a search path.
+   * @param rootModuleName the module the program starts from
+   * @param sources the source text of every module, keyed by its logical name
+   * @return the compilation result
+   * @throws IllegalArgumentException if a name is not a valid logical module name, the source set
+   *     is empty, more than 64 modules are compiled, a single source exceeds 1 MiB, the sources
+   *     together exceed 4 MiB, or the root module is not a key of {@code sources}
+   * @throws NullPointerException if an argument, a key or a value is null
    */
   public CompilationResult compile(String rootModuleName, Map<String, String> sources) {
     return compile(rootModuleName, sources, List.of());
   }
 
   /**
-   * Compiles source modules with an explicit set of typed host modules.
+   * Compiles source modules together with an explicit set of typed host modules.
    *
-   * <p>A host module declaration participates in strict type checking under its exact logical
-   * module name. Its factory is retained for later per-instance export creation and is not invoked
-   * during compilation.
+   * <p>{@code require("name")} performs an exact lookup among these modules; a logical name never
+   * resolves through the filesystem, a search path or the globals. A host module contributes its
+   * declaration to strict type checking, and its factory is kept for later per-instance export
+   * creation instead of being invoked here.
+   *
+   * @param rootModuleName the module the program starts from
+   * @param sources the source text of every source module, keyed by its logical name
+   * @param hostModules the host modules the program may require
+   * @return the compilation result
+   * @throws IllegalArgumentException if a name is not a valid logical module name, the source set
+   *     is empty, source and host modules together exceed 64, a single source or host declaration
+   *     exceeds 1 MiB, the sources together exceed 4 MiB, a host module name is duplicated, a host
+   *     and a source module share a name, or the root module is not a key of {@code sources}
+   * @throws NullPointerException if an argument, a key, a value or a list element is null
    */
   public CompilationResult compile(
       String rootModuleName, Map<String, String> sources, List<HostModule> hostModules) {

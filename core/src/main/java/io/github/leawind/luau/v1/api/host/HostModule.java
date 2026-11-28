@@ -9,9 +9,19 @@ import java.util.Objects;
  *
  * <p>{@code typeDeclaration} is a strict Luau module body describing the value returned by {@code
  * require(name)}. It is type-checked but never executed.
+ *
+ * @param name the logical module name: non-blank, at most 256 UTF-8 bytes, with no backslash, NUL,
+ *     whitespace or control character and no empty, {@code .} or {@code ..} segment
+ * @param interfaceVersion a version label for the module interface: non-blank, at most 256 UTF-8
+ *     bytes and free of NUL
+ * @param typeDeclaration the Luau type declaration of the export table; non-blank
+ * @param factory creates the export table for each script instance; must not be null
  */
 public record HostModule(
     String name, String interfaceVersion, String typeDeclaration, HostModuleFactory factory) {
+  /**
+   * Rejects a name, version or declaration that breaks the documented rules, and a null factory.
+   */
   public HostModule {
     name = ModuleNames.requireValid(name);
     interfaceVersion = ModuleNames.requireWellFormedUnicode(interfaceVersion, "interfaceVersion");

@@ -1,14 +1,20 @@
+import com.vanniktech.maven.publish.JavaLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Properties
 import java.util.zip.ZipFile
 import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
 import org.gradle.external.javadoc.StandardJavadocDocletOptions
+import org.gradle.plugins.signing.Sign
 
 plugins {
     `java-library`
-    `maven-publish`
+    id("com.vanniktech.maven.publish") version "0.37.0"
     id("com.diffplug.spotless") version "8.12.0"
 }
 
@@ -1140,6 +1146,17 @@ val verifyUniversalJar by tasks.registering {
 // A configured prebuilt natives directory means every platform of the release is available, so a
 // plain local build assembles the publishable JAR and checks it the way a release does.
 if (prebuiltNativesDirectory.isPresent) {
+    // The released artifact is the universal JAR. Gradle only publishes a java component artifact
+    // that is still present unchanged, and a substitute would leave the module metadata describing
+    // the platform JAR, so the component itself exposes the universal JAR in place of the host one.
+    for (configurationName in listOf("apiElements", "runtimeElements")) {
+        configurations.named(configurationName) {
+            outgoing.artifacts.clear()
+            outgoing.artifact(universalJar) {
+                classifier = null
+            }
+        }
+    }
     tasks.named("build") {
         dependsOn(universalJar)
     }
@@ -1148,42 +1165,69 @@ if (prebuiltNativesDirectory.isPresent) {
     }
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            from(components["java"])
-            artifactId = artifactName
-            pom {
-                name.set(providers.gradleProperty("luau.name").get())
-                description.set(
-                    providers.gradleProperty("luau.description").get(),
-                )
-                url.set(providers.gradleProperty("luau.homepage").get())
-                licenses {
-                    license {
-                        name.set(providers.gradleProperty("luau.license").get())
-                        url.set("https://opensource.org/licenses/MIT")
-                    }
-                }
-                developers {
-                    developer {
-                        id.set(providers.gradleProperty("luau.author").get())
-                        name.set(providers.gradleProperty("luau.author").get())
-                    }
-                }
-                scm {
-                    connection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
-                    developerConnection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
-                    url.set(providers.gradleProperty("luau.sources").get())
-                }
-                issueManagement {
-                    system.set("GitHub")
-                    url.set(providers.gradleProperty("luau.issues").get())
-                }
+// Publishing to the Central Portal uploads signed artifacts only. Without the key the build would
+// upload unsigned files and fail validation later for a reason the log does not name, so the key is
+// required up front whenever a Central task is requested. Local repository publications skip
+// signing because they hold no key.
+if (gradle.startParameter.taskNames.any { it.contains("MavenCentral", ignoreCase = true) }) {
+    require(providers.gradleProperty("signingInMemoryKey").isPresent) {
+        "Publishing to Maven Central needs the signing key. Pass it as the signingInMemoryKey Gradle " +
+            "property, or the ORG_GRADLE_PROJECT_signingInMemoryKey environment variable."
+    }
+}
+
+mavenPublishing {
+    publishToMavenCentral(automaticRelease = true)
+    // The publication takes the artifact id from the archive name instead of the module name, so the
+    // published library and the JAR in `build/libs` cannot drift apart.
+    coordinates(artifactId = artifactName)
+    signAllPublications()
+    configure(
+        JavaLibrary(
+            // `withJavadocJar` above already publishes the javadoc JAR through the java component, so
+            // the plugin must not package it a second time; its own task writes the same file.
+            javadocJar = JavadocJar.None(),
+            sourcesJar = SourcesJar.Sources(),
+        ),
+    )
+    pom {
+        name.set(providers.gradleProperty("luau.name").get())
+        description.set(
+            providers.gradleProperty("luau.description").get(),
+        )
+        url.set(providers.gradleProperty("luau.homepage").get())
+        licenses {
+            license {
+                name.set(providers.gradleProperty("luau.license").get())
+                url.set("https://opensource.org/licenses/MIT")
             }
         }
+        developers {
+            developer {
+                id.set(providers.gradleProperty("luau.author").get())
+                name.set(providers.gradleProperty("luau.author").get())
+            }
+        }
+        scm {
+            connection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
+            developerConnection.set("scm:git:${providers.gradleProperty("luau.sources").get()}.git")
+            url.set(providers.gradleProperty("luau.sources").get())
+        }
+        issueManagement {
+            system.set("GitHub")
+            url.set(providers.gradleProperty("luau.issues").get())
+        }
     }
+}
 
+// A local repository needs no signature, and one cannot be produced without the key. A Central
+// release without the key has already failed above, so only the key decides whether signing is
+// mandatory here.
+if (!providers.gradleProperty("signingInMemoryKey").isPresent) {
+    tasks.withType<Sign>().configureEach { isRequired = false }
+}
+
+publishing {
     // Publishing into the build directory keeps the resolution check self-contained: the layout is
     // a plain Maven repository that a consuming build can point at without touching ~/.m2.
     repositories {
@@ -1192,4 +1236,13 @@ publishing {
             url = uri(layout.buildDirectory.dir("local-repo"))
         }
     }
+}
+
+// A publication must never upload a JAR that failed the universal checks, and asking for an artifact
+// the checks would reject has to fail with the reason rather than publish the platform JAR.
+tasks.withType<PublishToMavenRepository>().configureEach {
+    dependsOn(verifyUniversalJar)
+}
+tasks.withType<PublishToMavenLocal>().configureEach {
+    dependsOn(verifyUniversalJar)
 }

@@ -178,7 +178,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Build universal release JAR
-        run: ./gradlew :mod:verifyUniversalJar :core:sourcesJar -PprebuiltNativesDir=prebuilt-natives
+        run: ./gradlew :mod:verifyUniversalJar :core:sourcesJar :core:javadocJar -PprebuiltNativesDir=prebuilt-natives
 
       - name: Verify publishing configuration
         if: github.event_name == 'push'
@@ -211,6 +211,7 @@ jobs:
           github-files: |
             mod/build/libs/*-universal.jar
             core/build/libs/*-sources.jar
+            core/build/libs/*-javadoc.jar
 
           modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}

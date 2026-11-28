@@ -24,7 +24,7 @@ dependencies {
 
 `<version>` is a [release](https://github.com/Leawind/luau/releases) number. The jar carries the native library for Windows x86_64, Linux x86_64 and aarch64, and macOS x86_64 and aarch64; musl Linux, Windows ARM64 and Android are not supported.
 
-As a Minecraft mod, the same jar goes into the `mods` folder; Fabric, Forge and NeoForge are supported. A mod can require it by the mod id `luau` instead of bundling it.
+Inside Minecraft, the same jar goes into the `mods` folder and other mods can depend on it by the mod id `luau`.
 
 ## Example
 

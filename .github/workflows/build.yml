@@ -62,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: build/native/dist
+          path: core/build/native/dist
           if-no-files-found: error
 
   build-linux:
@@ -108,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: build/native/dist
+          path: core/build/native/dist
           if-no-files-found: error
 
   ubsan:
@@ -142,14 +142,14 @@ jobs:
         shell: bash
         run: |
           source /opt/rh/gcc-toolset-14/enable
-          ./gradlew test -PnativeSanitizers=undefined --console=plain 2>&1 | tee ubsan.log
+          ./gradlew :core:test -PnativeSanitizers=undefined --console=plain 2>&1 | tee ubsan.log
 
       - name: Fail on an UndefinedBehaviorSanitizer report
         if: always()
         shell: bash
         run: |
           grep -n 'runtime error:' ubsan.log > hits.txt || true
-          find build/test-results -name '*.xml' -exec grep -n 'runtime error:' {} + >> hits.txt 2>/dev/null || true
+          find core/build/test-results -name '*.xml' -exec grep -n 'runtime error:' {} + >> hits.txt 2>/dev/null || true
           if [ -s hits.txt ]; then
             cat hits.txt
             echo "::error::UndefinedBehaviorSanitizer reported undefined behavior"
@@ -187,11 +187,11 @@ jobs:
       - name: Check C++ formatting
         run: |
           pip install clang-format==23.1.5
-          ./gradlew clangFormatCheck -PclangFormatPath="$(command -v clang-format)"
+          ./gradlew :core:clangFormatCheck -PclangFormatPath="$(command -v clang-format)"
 
       - uses: actions/download-artifact@v8
         with:
           path: prebuilt-natives
 
       - name: Assemble and verify universal JAR
-        run: ./gradlew verifyUniversalJar -PprebuiltNativesDir=prebuilt-natives
+        run: ./gradlew :mod:verifyUniversalJar -PprebuiltNativesDir=prebuilt-natives

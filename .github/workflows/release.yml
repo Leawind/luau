@@ -51,7 +51,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: build/native/dist
+          path: core/build/native/dist
           if-no-files-found: error
 
   native-linux:
@@ -96,7 +96,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
-          path: build/native/dist
+          path: core/build/native/dist
           if-no-files-found: error
 
   release:
@@ -148,7 +148,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Build universal release JAR
-        run: ./gradlew verifyUniversalJar sourcesJar -PprebuiltNativesDir=prebuilt-natives
+        run: ./gradlew :mod:verifyUniversalJar :core:sourcesJar -PprebuiltNativesDir=prebuilt-natives
 
       - name: Verify publishing configuration
         if: github.event_name == 'push'
@@ -179,13 +179,13 @@ jobs:
           github-prerelease: ${{ steps.release_metadata.outputs.version_type != 'release' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           github-files: |
-            build/libs/*-universal.jar
-            build/libs/*-sources.jar
+            mod/build/libs/*-universal.jar
+            core/build/libs/*-sources.jar
 
           modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-          modrinth-files: build/libs/*-universal.jar
+          modrinth-files: mod/build/libs/*-universal.jar
 
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
-          curseforge-files: build/libs/*-universal.jar
+          curseforge-files: mod/build/libs/*-universal.jar

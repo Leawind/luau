@@ -40,7 +40,7 @@ git submodule update --init --recursive
 ./gradlew build
 ```
 
-A normal build compiles the JNI library for the current platform and embeds it in the produced JAR. On Windows the native build requires Visual Studio Build Tools with the C++ workload; the build script imports the MSVC environment itself, so no developer command prompt is needed.
+The repository has two modules. `core` is the library: the Java API, the JNI binding, and the native build. `mod` wraps it into the loader-visible artifact by carrying the core JAR and adding the mod metadata. A normal build compiles the JNI library for the current platform and embeds it in both artifacts. On Windows the native build requires Visual Studio Build Tools with the C++ workload; the build script imports the MSVC environment itself, so no developer command prompt is needed.
 
 Building requires JDK 21 or newer. The produced classes target Java 17.
 
@@ -101,7 +101,7 @@ The scope shares the time, interrupt-check, host-call and host-output limits acr
 
 ## Using it from another mod
 
-No Maven artifacts are published. Consume the released universal JAR as a mod dependency and declare a dependency on the `luau` mod in your loader metadata.
+The build produces `luau-core`, a plain JVM library, and `luau`, the mod package that carries it. No Maven artifacts are published, so compile against the core JAR and declare a dependency on the `luau` mod for runtime.
 
 `fabric.mod.json`:
 

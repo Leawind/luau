@@ -24,7 +24,7 @@ if(NOT MSVC)
     add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 endif()
 
-set(LUAU_RUNTIME_VERSION "0.0.0-UNKNOWN" CACHE STRING "Luau Runtime Mod version")
+set(LUAU_RUNTIME_VERSION "0.0.0-UNKNOWN" CACHE STRING "luau library version")
 set(LUAU_UPSTREAM_VERSION "UNKNOWN" CACHE STRING "Upstream Luau version")
 set(LUAU_UPSTREAM_COMMIT "UNKNOWN" CACHE STRING "Upstream Luau commit")
 set(LUAU_JNI_ABI_VERSION "0" CACHE STRING "JNI ABI version")
@@ -36,10 +36,10 @@ set(LUAU_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
 # Sanitizer group handed to -fsanitize, for example "undefined" or "address". The CI builds an
 # instrumented library to run the JUnit suite against it; the shipped binaries are built with
-# this empty. The address group is a local tool only: the test task preloads its runtime because
-# the JVM initializes long before it loads this library (see build.gradle.kts), and the suite
-# currently reports a heap-use-after-free inside the vendored Luau teardown with it, which would
-# keep a CI job red until Luau is updated.
+# this empty. The address group is a local tool only, not a CI job: the test task has to preload
+# its runtime because the JVM initializes long before it loads this library (see
+# core/build.gradle.kts), and an instrumented test process uses more memory than a shared runner
+# can spare.
 set(LUAU_JNI_SANITIZE "" CACHE STRING "Sanitizer group passed to -fsanitize, empty disables it")
 
 set(LUAU_SANITIZER_FLAGS)

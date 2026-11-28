@@ -45,6 +45,21 @@ jobs:
         with:
           validate-wrappers: true
 
+      - name: Compute the native source fingerprint
+        id: native_fingerprint
+        shell: bash
+        run: |
+          ./gradlew :core:writeNativeFingerprint --quiet
+          fingerprint="$(sed -n 's/^fingerprint=//p' core/build/native/fingerprint.properties)"
+          echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
+
+      # A restored build directory makes Ninja skip the compilation entirely.
+      - name: Restore the native build
+        uses: actions/cache@v6
+        with:
+          path: core/build/native
+          key: native-${{ matrix.platform }}-${{ matrix.os }}-${{ steps.native_fingerprint.outputs.fingerprint }}
+
       - name: Build and test
         run: ./gradlew build
 
@@ -89,6 +104,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           validate-wrappers: true
+
+      - name: Compute the native source fingerprint
+        id: native_fingerprint
+        shell: bash
+        run: |
+          ./gradlew :core:writeNativeFingerprint --quiet
+          fingerprint="$(sed -n 's/^fingerprint=//p' core/build/native/fingerprint.properties)"
+          echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
+
+      # A restored build directory makes Ninja skip the compilation entirely.
+      - name: Restore the native build
+        uses: actions/cache@v6
+        with:
+          path: core/build/native
+          key: native-${{ matrix.platform }}-${{ matrix.image }}-${{ steps.native_fingerprint.outputs.fingerprint }}
 
       - name: Build and test
         run: ./gradlew build

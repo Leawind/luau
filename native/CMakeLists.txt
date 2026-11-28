@@ -24,7 +24,6 @@ if(NOT MSVC)
     add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 endif()
 
-set(LUAU_RUNTIME_VERSION "0.0.0-UNKNOWN" CACHE STRING "luau library version")
 set(LUAU_UPSTREAM_VERSION "UNKNOWN" CACHE STRING "Upstream Luau version")
 set(LUAU_UPSTREAM_COMMIT "UNKNOWN" CACHE STRING "Upstream Luau commit")
 set(LUAU_JNI_ABI_VERSION "0" CACHE STRING "JNI ABI version")
@@ -86,7 +85,6 @@ target_include_directories(luau_jni PRIVATE
 )
 
 target_compile_definitions(luau_jni PRIVATE
-    LUAU_RUNTIME_VERSION="${LUAU_RUNTIME_VERSION}"
     LUAU_UPSTREAM_VERSION="${LUAU_UPSTREAM_VERSION}"
     LUAU_UPSTREAM_COMMIT="${LUAU_UPSTREAM_COMMIT}"
     LUAU_JNI_ABI_VERSION=${LUAU_JNI_ABI_VERSION}

@@ -2221,11 +2221,6 @@ extern "C"
         return env->NewStringUTF(LUAU_UPSTREAM_COMMIT);
     }
 
-    JNIEXPORT jstring JNICALL Java_io_github_leawind_luau_internal_jni_NativeBindings_runtimeVersion(JNIEnv* env, jclass)
-    {
-        return env->NewStringUTF(LUAU_RUNTIME_VERSION);
-    }
-
     jbyteArray compileImpl(JNIEnv* env, jclass, jbyteArray chunkNameUtf8, jbyteArray sourceUtf8)
     {
         using namespace leawind::luau;

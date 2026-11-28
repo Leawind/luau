@@ -26,8 +26,6 @@ public final class NativeBindings {
 
   public static native String luauCommit();
 
-  public static native String runtimeVersion();
-
   public static native byte[] compile(byte[] chunkNameUtf8, byte[] sourceUtf8);
 
   public static native NativeCompilationDiagnostic[] typecheckModules(

@@ -54,7 +54,6 @@ class LuauRuntimeTest {
     assertEquals(packagedProperty("luauVersion"), info.luauVersion());
     assertEquals(packagedProperty("luauCommit"), info.luauCommit());
     assertEquals(packagedProperty("jniAbiVersion"), String.valueOf(info.jniAbiVersion()));
-    assertEquals(packagedProperty("runtimeVersion"), info.runtimeVersion());
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
 

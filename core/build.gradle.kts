@@ -261,7 +261,6 @@ val configureNative by tasks.registering(Exec::class) {
     inputs.file(nativeDirectory.file("CMakeLists.txt"))
     inputs.dir(nativeDirectory.dir("src"))
     inputs.file(nativeDirectory.file("luau/CMakeLists.txt"))
-    inputs.property("runtimeVersion", version)
     inputs.property("luauVersion", luauVersion)
     inputs.property("luauCommit", luauCommit)
     inputs.property("jniAbiVersion", jniAbiVersion)
@@ -301,7 +300,6 @@ val configureNative by tasks.registering(Exec::class) {
             add("-DLUAU_BUILD_CLI=OFF")
             add("-DLUAU_BUILD_TESTS=OFF")
             add("-DLUAU_BUILD_WEB=OFF")
-            add("-DLUAU_RUNTIME_VERSION=$version")
             add("-DLUAU_UPSTREAM_VERSION=$luauVersion")
             add("-DLUAU_UPSTREAM_COMMIT=$luauCommit")
             add("-DLUAU_JNI_ABI_VERSION=$jniAbiVersion")
@@ -319,9 +317,8 @@ val buildNative by tasks.registering(Exec::class) {
     inputs.dir(nativeDirectory.dir("src"))
     inputs.dir(nativeDirectory.dir("luau"))
     // The compile definitions come from these, so a change has to rebuild the library: without
-    // them a version bump only reconfigures CMake and the stale binary stays in place, still
-    // reporting the old version.
-    inputs.property("runtimeVersion", version)
+    // them a Luau bump only reconfigures CMake and the stale binary stays in place, still
+    // reporting the previous upstream version.
     inputs.property("luauVersion", luauVersion)
     inputs.property("luauCommit", luauCommit)
     inputs.property("jniAbiVersion", jniAbiVersion)
@@ -362,6 +359,13 @@ val stageNativeResources by tasks.registering(Sync::class) {
     group = "native"
     description = "Stages the current platform native library and its integrity manifest."
     dependsOn(buildNative)
+
+    // The manifest records these values, so changing one has to rewrite it instead of leaving the
+    // previous values in an output Gradle considers up to date.
+    inputs.property("runtimeVersion", version)
+    inputs.property("luauVersion", luauVersion)
+    inputs.property("luauCommit", luauCommit)
+    inputs.property("jniAbiVersion", jniAbiVersion)
 
     into(generatedNativeResources)
     from(nativeLibrary) {

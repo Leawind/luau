@@ -4,6 +4,7 @@ import io.github.leawind.luau.internal.jni.NativeBindings;
 import io.github.leawind.luau.internal.jni.NativeLuauException;
 import io.github.leawind.luau.internal.jni.NativeResultDecoder;
 import io.github.leawind.luau.internal.loader.NativePlatform;
+import io.github.leawind.luau.internal.loader.RuntimeProperties;
 import io.github.leawind.luau.internal.validation.ModuleNames;
 import io.github.leawind.luau.v1.api.compile.CompilationDiagnostic;
 import io.github.leawind.luau.v1.api.compile.CompilationResult;
@@ -41,7 +42,7 @@ public final class LuauRuntime {
    */
   public static RuntimeInfo info() {
     return new RuntimeInfo(
-        NativeBindings.runtimeVersion(),
+        RuntimeProperties.get("runtimeVersion"),
         NativeBindings.luauVersion(),
         NativeBindings.luauCommit(),
         NativeBindings.abiVersion(),

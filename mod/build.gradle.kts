@@ -180,6 +180,13 @@ val stageUniversalNativeResources by tasks.registering {
     group = "native"
     description = "Stages all release native libraries supplied by CI."
 
+    // The manifest records these values, so changing one has to rewrite it instead of leaving the
+    // previous values in an output Gradle considers up to date.
+    inputs.property("runtimeVersion", version)
+    inputs.property("luauVersion", luauVersion)
+    inputs.property("luauCommit", luauCommit)
+    inputs.property("jniAbiVersion", jniAbiVersion)
+
     val prebuiltNatives = prebuiltNativesDirectory.orNull
     if (prebuiltNatives != null) {
         inputs.dir(prebuiltNatives)

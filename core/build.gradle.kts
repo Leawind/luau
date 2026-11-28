@@ -476,6 +476,13 @@ val validateLuauSubmoduleCommit by tasks.registering {
     }
 }
 
+/**
+ * `native/.clang-format` is a byte-for-byte copy of `native/luau/.clang-format`, the upstream Luau
+ * style. It must stay identical rather than merely similar: `luau_jni.cpp` is compiled next to the
+ * vendored Luau sources and should read as one code base. The file itself cannot carry a comment
+ * saying so, because any comment would break this comparison; this is where the provenance lives.
+ * When upstream changes its style, re-copy the file and say why in the commit.
+ */
 val validateClangFormatConfig by tasks.registering {
     group = "verification"
     description = "Verifies that native/.clang-format copies the upstream Luau style byte for byte."

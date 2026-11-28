@@ -14,11 +14,11 @@ It targets Java 17 and has no dependencies. Native Luau libraries are bundled in
 
 ```kotlin
 repositories {
-    maven("https://api.modrinth.com/maven")
+    mavenCentral()
 }
 
 dependencies {
-    implementation("maven.modrinth:luau:<version>")
+    implementation("io.github.leawind:luau:<version>")
 }
 ```
 

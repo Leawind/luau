@@ -220,3 +220,50 @@ jobs:
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
           curseforge-files: mod/build/libs/*-universal.jar
+
+  publish:
+    name: Publish to Maven Central
+    needs: [native, native-linux]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: prebuilt-natives
+
+      - name: Verify tag
+        shell: bash
+        run: |
+          project_version="$(sed -n 's/^luau.artifactVersion=//p' gradle.properties)"
+          test "${GITHUB_REF_NAME}" = "v${project_version}"
+
+      - name: Publish to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: ./gradlew :core:publishAndReleaseToMavenCentral -PprebuiltNativesDir=prebuilt-natives
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: core-jars
+          path: |
+            core/build/libs/*-universal.jar
+            core/build/libs/*-sources.jar
+            core/build/libs/*-javadoc.jar
+          if-no-files-found: warn

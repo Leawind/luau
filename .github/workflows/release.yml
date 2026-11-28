@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   # Builds the whole release without publishing, so the packaging and the publishing actions can be
   # exercised before a tag exists. Only a tag push ever publishes.
   workflow_dispatch:

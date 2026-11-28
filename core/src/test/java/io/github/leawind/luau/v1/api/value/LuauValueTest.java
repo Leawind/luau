@@ -51,9 +51,14 @@ class LuauValueTest {
   void stringsAndTableKeysRejectUnpairedSurrogates() {
     String malformed = "\ud800";
 
-    assertThrows(IllegalArgumentException.class, () -> new LuauString(malformed));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new LuauTable(java.util.Map.of(malformed, LuauNil.INSTANCE)));
+    assertEquals(
+        "value contains an unpaired UTF-16 surrogate",
+        assertThrows(IllegalArgumentException.class, () -> new LuauString(malformed)).getMessage());
+    assertEquals(
+        "table key contains an unpaired UTF-16 surrogate",
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new LuauTable(java.util.Map.of(malformed, LuauNil.INSTANCE)))
+            .getMessage());
   }
 }

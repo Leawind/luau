@@ -200,7 +200,9 @@ class LuauRuntimeTest {
     CompiledChunk chunk = LuauRuntime.compile("main", "return 1").chunk().orElseThrow();
     chunk.close();
 
-    assertThrows(IllegalStateException.class, chunk::execute);
+    assertEquals(
+        "Compiled chunk is closed",
+        assertThrows(IllegalStateException.class, chunk::execute).getMessage());
     chunk.close();
   }
 
@@ -293,7 +295,9 @@ class LuauRuntimeTest {
         ScriptInstance instance = chunk.createInstance()) {
       assertInstanceOf(ExecutionResult.RuntimeFailed.class, instance.execute());
       assertTrue(instance.isFaulted());
-      assertThrows(IllegalStateException.class, instance::execute);
+      assertEquals(
+          "Script instance is faulted",
+          assertThrows(IllegalStateException.class, instance::execute).getMessage());
       instance.reset();
       assertFalse(instance.isFaulted());
       assertInstanceOf(ExecutionResult.RuntimeFailed.class, instance.execute());
@@ -301,9 +305,26 @@ class LuauRuntimeTest {
   }
 
   @Test
-  void validatesInstanceMemoryLimits() {
-    assertThrows(IllegalArgumentException.class, () -> new InstanceConfig(1024));
-    assertThrows(IllegalArgumentException.class, () -> new InstanceConfig(1024L * 1024 * 1024 + 1));
+  void rejectsHeapLimitsOutsideTheSupportedRange() {
+    assertEquals(
+        "VM memory limit must be between 16777216 and 1073741824 bytes",
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new InstanceConfig(InstanceConfig.MIN_MEMORY_BYTES - 1))
+            .getMessage());
+    assertEquals(
+        "VM memory limit must be between 16777216 and 1073741824 bytes",
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new InstanceConfig(InstanceConfig.MAX_MEMORY_BYTES + 1))
+            .getMessage());
+
+    assertEquals(
+        InstanceConfig.MIN_MEMORY_BYTES,
+        new InstanceConfig(InstanceConfig.MIN_MEMORY_BYTES).maxMemoryBytes());
+    assertEquals(
+        InstanceConfig.MAX_MEMORY_BYTES,
+        new InstanceConfig(InstanceConfig.MAX_MEMORY_BYTES).maxMemoryBytes());
   }
 
   @Test

@@ -232,7 +232,10 @@ class LuauModulesTest {
     for (int index = 0; index < 65; ++index) {
       tooMany.put("module/" + index, "return " + index);
     }
-    assertThrows(IllegalArgumentException.class, () -> LuauRuntime.compile("module/0", tooMany));
+    assertEquals(
+        "Program exceeds the 64 total module limit",
+        assertThrows(IllegalArgumentException.class, () -> LuauRuntime.compile("module/0", tooMany))
+            .getMessage());
   }
 
   private static ExecutionResult.Completed completed(ExecutionResult result) {

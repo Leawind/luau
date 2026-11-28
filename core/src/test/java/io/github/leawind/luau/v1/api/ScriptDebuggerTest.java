@@ -154,8 +154,13 @@ class ScriptDebuggerTest {
           paused.pauseInfo().location(), paused.pauseInfo().stackFrames().get(0).location());
       assertTrue(debugger.isPaused());
       assertEquals(paused.pauseInfo(), debugger.pauseInfo().orElseThrow());
-      assertThrows(IllegalStateException.class, instance::initialize);
-      assertThrows(IllegalStateException.class, () -> debugger.setBreakpoint("debug/main", 4));
+      assertEquals(
+          "Script instance is paused; use its debugger to resume or terminate",
+          assertThrows(IllegalStateException.class, instance::initialize).getMessage());
+      assertEquals(
+          "Breakpoints cannot change while execution is paused",
+          assertThrows(IllegalStateException.class, () -> debugger.setBreakpoint("debug/main", 4))
+              .getMessage());
 
       var completed = assertInstanceOf(ExecutionResult.Completed.class, debugger.resume());
       assertTrue(completed.values().isEmpty());
@@ -638,7 +643,9 @@ class ScriptDebuggerTest {
       Breakpoint breakpoint = instance.debugger().setBreakpoint("debug/terminate", 4);
       assertEquals(4, breakpoint.resolvedLine());
       assertInstanceOf(ExecutionResult.Paused.class, instance.invokeExport("run", List.of()));
-      assertThrows(IllegalStateException.class, instance::reset);
+      assertEquals(
+          "Terminate a paused invocation before resetting its script instance",
+          assertThrows(IllegalStateException.class, instance::reset).getMessage());
 
       var terminated =
           assertInstanceOf(ExecutionResult.Terminated.class, instance.debugger().terminate());
@@ -647,7 +654,10 @@ class ScriptDebuggerTest {
       assertFalse(instance.debugger().isPaused());
       assertTrue(instance.debugger().pauseInfo().isEmpty());
       assertEquals(Set.of(breakpoint), instance.debugger().breakpoints());
-      assertThrows(IllegalStateException.class, () -> instance.invokeExport("run", List.of()));
+      assertEquals(
+          "Script instance is faulted",
+          assertThrows(IllegalStateException.class, () -> instance.invokeExport("run", List.of()))
+              .getMessage());
 
       instance.reset();
       assertFalse(instance.isFaulted());

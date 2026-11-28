@@ -13,7 +13,7 @@ The library targets Java 17 and has no dependencies. Native Luau libraries are b
 ## Quick start
 
 ```java
-var compilation = LuauRuntime.getInstance().compile("main", """
+var compilation = LuauRuntime.compile("main", """
     local total = 0
 
     return {
@@ -51,7 +51,7 @@ HostModule counter = new HostModule("host/counter", "1",
     () -> Map.of("next", (HostFunction) (context, arguments) ->
         List.of(new LuauNumber(next.incrementAndGet()))));
 
-var compilation = runtime.compile("main",
+var compilation = LuauRuntime.compile("main",
     Map.of("main", """
         local counter = require("host/counter")
         return counter.next()

@@ -23,7 +23,7 @@ public final class RuntimeBoundaryProbe {
                 protectedCall.equals("xpcall")
                     ? "xpcall(fail, function(message) return message end)"
                     : "pcall(fail)");
-    var compilation = LuauRuntime.getInstance().compile("main", Map.of("main", source));
+    var compilation = LuauRuntime.compile("main", Map.of("main", source));
     if (!compilation.successful()) {
       throw new IllegalStateException(compilation.diagnostics().toString());
     }

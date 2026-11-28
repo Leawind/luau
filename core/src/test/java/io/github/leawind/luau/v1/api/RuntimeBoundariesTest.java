@@ -28,7 +28,6 @@ import org.junit.jupiter.api.Test;
 
 class RuntimeBoundariesTest {
   private static final int ERROR_MESSAGE_LIMIT = 64 * 1024;
-  private final LuauRuntime runtime = LuauRuntime.getInstance();
 
   @Test
   void protectedCallCannotSwallowExecutionLimit() throws Exception {
@@ -46,7 +45,7 @@ class RuntimeBoundariesTest {
             () ->
                 Map.of("next", (HostFunction) (context, arguments) -> List.of(new LuauNumber(1))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -90,7 +89,7 @@ class RuntimeBoundariesTest {
                     (HostFunction)
                         (context, arguments) -> List.of(new LuauString("x".repeat(1024)))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -119,7 +118,7 @@ class RuntimeBoundariesTest {
   @Test
   void savedArraysKeepTheirShapeAcrossExportCalls() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -157,7 +156,7 @@ class RuntimeBoundariesTest {
 
   @Test
   void idleDebuggerRequestsDoNotLeakIntoTheNextInvocation() {
-    var compilation = runtime.compile("main", "return { run = function() return 1 end }");
+    var compilation = LuauRuntime.compile("main", "return { run = function() return 1 end }");
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -179,7 +178,7 @@ class RuntimeBoundariesTest {
             () ->
                 Map.of("next", (HostFunction) (context, arguments) -> List.of(new LuauNumber(1))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -220,7 +219,7 @@ class RuntimeBoundariesTest {
 
   @Test
   void runtimeErrorMessagesAreBounded() {
-    var compilation = runtime.compile("main", "error(string.rep('界', 2 * 1024 * 1024))");
+    var compilation = LuauRuntime.compile("main", "error(string.rep('界', 2 * 1024 * 1024))");
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -243,7 +242,7 @@ class RuntimeBoundariesTest {
             () ->
                 Map.of("next", (HostFunction) (context, arguments) -> List.of(new LuauNumber(1))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -291,7 +290,7 @@ class RuntimeBoundariesTest {
                     (HostFunction)
                         (context, arguments) -> List.of(new LuauString("x".repeat(256)))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -329,7 +328,7 @@ class RuntimeBoundariesTest {
   @Test
   void protectedCallsCannotSwallowMemoryLimit() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -366,7 +365,7 @@ class RuntimeBoundariesTest {
   @Test
   void largeStringsRespectMemoryLimitOnlyWhenContentIsUnique() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -419,7 +418,7 @@ class RuntimeBoundariesTest {
   @Test
   void terminateBreaksOutOfProtectedCall() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -463,7 +462,7 @@ class RuntimeBoundariesTest {
                               new LuauTable(Map.of("k", new LuauString("v"))));
                         }));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -498,7 +497,7 @@ class RuntimeBoundariesTest {
   @Test
   void nestedArraysKeepTheirShapeAcrossExportCalls() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -532,7 +531,7 @@ class RuntimeBoundariesTest {
   @Test
   void arrayShapeSurvivesHeavyTableChurn() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",

@@ -40,13 +40,11 @@ class HostModulesTest {
       }
       """;
 
-  private final LuauRuntime runtime = LuauRuntime.getInstance();
-
   @Test
   void statelessExecutionCreatesFreshHostExports() {
     AtomicInteger factories = new AtomicInteger();
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -72,7 +70,7 @@ class HostModulesTest {
     AtomicInteger factories = new AtomicInteger();
     HostModule host = statefulHostModule(factories);
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -160,7 +158,7 @@ class HostModulesTest {
   void convertsExpectedAndUnexpectedJavaFailuresWithoutEscapingJni() {
     AtomicInteger factories = new AtomicInteger();
     var compilation =
-        runtime.compile("main", failureProgram(), List.of(statefulHostModule(factories)));
+        LuauRuntime.compile("main", failureProgram(), List.of(statefulHostModule(factories)));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -189,7 +187,7 @@ class HostModulesTest {
   @Test
   void enforcesHostCallAndRegisteredOutputBudgets() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -243,7 +241,7 @@ class HostModulesTest {
   void hostDeclarationsAreTypeCheckedAndGrantsAreExplicit() {
     HostModule host = statefulHostModule(new AtomicInteger());
     var wrongType =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -258,20 +256,21 @@ class HostModulesTest {
         wrongType.diagnostics().stream()
             .anyMatch(diagnostic -> diagnostic.message().contains("string")));
 
-    var missingGrant = runtime.compile("main", Map.of("main", "return require(\"test/host@1\")"));
+    var missingGrant =
+        LuauRuntime.compile("main", Map.of("main", "return require(\"test/host@1\")"));
     assertFalse(missingGrant.successful());
 
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            runtime.compile(
+            LuauRuntime.compile(
                 "main", Map.of("main", "return 1", HOST_NAME, "return 2"), List.of(host)));
   }
 
   @Test
   void hostExportTablesAreReadOnly() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",

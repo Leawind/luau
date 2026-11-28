@@ -60,11 +60,9 @@ class ScriptDebuggerTest {
       }
       """;
 
-  private final LuauRuntime runtime = LuauRuntime.getInstance();
-
   @Test
   void debuggerOperationsRequireTheInstanceOwnerThread() throws InterruptedException {
-    var compilation = runtime.compile("debug/thread", "return 1");
+    var compilation = LuauRuntime.compile("debug/thread", "return 1");
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -89,7 +87,7 @@ class ScriptDebuggerTest {
   @Test
   void pausesAndResumesRepeatedExecution() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/execute",
             """
             local value = 40
@@ -121,7 +119,7 @@ class ScriptDebuggerTest {
   @Test
   void resolvesBreakpointsAndResumesInitialization() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/main",
             """
             local total = 1
@@ -178,7 +176,7 @@ class ScriptDebuggerTest {
   @Test
   void preservesSourceModuleValuesAcrossPauseAndResume() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "app/main",
             Map.of(
                 "app/main",
@@ -225,7 +223,7 @@ class ScriptDebuggerTest {
   @Test
   void resumesNestedScriptCoroutineAcrossMultipleBreakpoints() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/coroutine",
             """
             return {
@@ -271,7 +269,7 @@ class ScriptDebuggerTest {
   @Test
   void pausesAndResumesNestedSourceModuleInitialization() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "app/main",
             Map.of(
                 "app/main",
@@ -337,7 +335,7 @@ class ScriptDebuggerTest {
                             List.of(
                                 new LuauNumber(context.require(DebugCapability.class).value()))));
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/host-main",
             Map.of(
                 "debug/host-main",
@@ -379,7 +377,7 @@ class ScriptDebuggerTest {
   @Test
   void acceptsCrossThreadPauseRequestAtSafepoint() throws InterruptedException {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/request-pause",
             Map.of("debug/request-pause", CONTROL_PROGRAM),
             List.of(controlHostModule()));
@@ -425,7 +423,7 @@ class ScriptDebuggerTest {
   @Test
   void acceptsCrossThreadTerminationRequestAtSafepoint() throws InterruptedException {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/request-terminate",
             Map.of("debug/request-terminate", CONTROL_PROGRAM),
             List.of(controlHostModule()));
@@ -461,7 +459,7 @@ class ScriptDebuggerTest {
   @Test
   void stepsIntoOverAndOutOfLuauFunctions() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/step",
             """
             return {
@@ -527,7 +525,7 @@ class ScriptDebuggerTest {
   @Test
   void stepsAcrossScriptCoroutineBoundary() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/step-coroutine",
             """
             return {
@@ -584,7 +582,7 @@ class ScriptDebuggerTest {
   @Test
   void stepsIntoAndOutOfSourceModuleInitialization() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/step-module",
             Map.of(
                 "debug/step-module",
@@ -622,7 +620,7 @@ class ScriptDebuggerTest {
   @Test
   void terminatesPausedInvocationAndReappliesBreakpointAfterReset() throws InterruptedException {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "debug/terminate",
             """
             return {

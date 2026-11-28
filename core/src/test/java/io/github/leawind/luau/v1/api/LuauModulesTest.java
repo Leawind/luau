@@ -19,12 +19,11 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class LuauModulesTest {
-  private final LuauRuntime runtime = LuauRuntime.getInstance();
 
   @Test
   void executesTransitiveModulesWithPerInstanceCaching() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "app/main",
             Map.of(
                 "app/main",
@@ -79,7 +78,7 @@ class LuauModulesTest {
   @Test
   void statelessExecutionCanRequireRegisteredModules() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of("main", "return require(\"answer\").value", "answer", "return {value = 42}"));
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
@@ -92,7 +91,7 @@ class LuauModulesTest {
   @Test
   void attributesDependencyTypeErrorsToTheirModule() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -114,14 +113,15 @@ class LuauModulesTest {
 
   @Test
   void rejectsUnknownAndStaticallyCyclicDependencies() {
-    var missing = runtime.compile("main", Map.of("main", "return require(\"not-registered\")"));
+    var missing = LuauRuntime.compile("main", Map.of("main", "return require(\"not-registered\")"));
     assertFalse(missing.successful());
     assertTrue(
         missing.diagnostics().stream()
             .anyMatch(diagnostic -> diagnostic.message().contains("not-registered")));
 
     var cyclic =
-        runtime.compile("A", Map.of("A", "return require(\"B\")", "B", "return require(\"A\")"));
+        LuauRuntime.compile(
+            "A", Map.of("A", "return require(\"B\")", "B", "return require(\"A\")"));
     assertFalse(cyclic.successful());
     assertTrue(
         cyclic.diagnostics().stream()
@@ -131,7 +131,7 @@ class LuauModulesTest {
   @Test
   void runtimeRejectsDynamicUnknownAndCyclicDependencies() {
     var missing =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -146,7 +146,7 @@ class LuauModulesTest {
     }
 
     var cyclic =
-        runtime.compile(
+        LuauRuntime.compile(
             "A",
             Map.of(
                 "A",
@@ -169,7 +169,7 @@ class LuauModulesTest {
   @Test
   void requireValidatesArgumentsAndModuleReturnCountAtRuntime() {
     var invalidArgument =
-        runtime.compile("main", Map.of("main", "return require(42 :: any) :: any"));
+        LuauRuntime.compile("main", Map.of("main", "return require(42 :: any) :: any"));
     assertTrue(invalidArgument.successful(), () -> invalidArgument.diagnostics().toString());
     try (CompiledChunk chunk = invalidArgument.chunk().orElseThrow()) {
       var failure = assertInstanceOf(ExecutionResult.RuntimeFailed.class, chunk.execute());
@@ -177,7 +177,7 @@ class LuauModulesTest {
     }
 
     var multipleReturns =
-        runtime.compile(
+        LuauRuntime.compile(
             "main", Map.of("main", "return require(\"multiple\")", "multiple", "return 1, 2"));
     assertTrue(multipleReturns.successful(), () -> multipleReturns.diagnostics().toString());
     try (CompiledChunk chunk = multipleReturns.chunk().orElseThrow()) {
@@ -189,7 +189,7 @@ class LuauModulesTest {
   @Test
   void requiredModulesShareTheCallingExecutionBudget() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "main",
             Map.of(
                 "main",
@@ -216,22 +216,23 @@ class LuauModulesTest {
   @Test
   void validatesClosedModuleSetsAndLogicalNames() {
     assertThrows(
-        IllegalArgumentException.class, () -> runtime.compile("main", Map.of("other", "return 1")));
+        IllegalArgumentException.class,
+        () -> LuauRuntime.compile("main", Map.of("other", "return 1")));
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.compile("../main", Map.of("../main", "return 1")));
+        () -> LuauRuntime.compile("../main", Map.of("../main", "return 1")));
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.compile("app//main", Map.of("app//main", "return 1")));
+        () -> LuauRuntime.compile("app//main", Map.of("app//main", "return 1")));
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.compile("app\\main", Map.of("app\\main", "return 1")));
+        () -> LuauRuntime.compile("app\\main", Map.of("app\\main", "return 1")));
 
     Map<String, String> tooMany = new LinkedHashMap<>();
     for (int index = 0; index < 65; ++index) {
       tooMany.put("module/" + index, "return " + index);
     }
-    assertThrows(IllegalArgumentException.class, () -> runtime.compile("module/0", tooMany));
+    assertThrows(IllegalArgumentException.class, () -> LuauRuntime.compile("module/0", tooMany));
   }
 
   private static ExecutionResult.Completed completed(ExecutionResult result) {

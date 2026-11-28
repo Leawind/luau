@@ -18,8 +18,9 @@ import java.util.TreeMap;
 /**
  * Entry point for compiling and executing sandboxed Luau code.
  *
- * <p>The runtime is a process-wide facade without mutable state, so every call is independent and
- * every {@link ScriptInstance} owns its own VM.
+ * <p>The runtime holds no state: compilation is a pure function of its sources, and every {@link
+ * ScriptInstance} owns its own VM. There is nothing to configure, so there is no instance to
+ * obtain.
  *
  * <p>The native library is loaded and verified on first use. A platform this build does not bundle,
  * and a library that fails size or digest verification, fail the call with an unchecked exception
@@ -29,20 +30,8 @@ public final class LuauRuntime {
   private static final int MAX_MODULES = 64;
   private static final int MAX_SOURCE_BYTES = 1024 * 1024;
   private static final int MAX_TOTAL_SOURCE_BYTES = 4 * 1024 * 1024;
-  private static final LuauRuntime INSTANCE = new LuauRuntime();
 
   private LuauRuntime() {}
-
-  /**
-   * Returns the process-wide runtime facade.
-   *
-   * <p>This method does not load the native library.
-   *
-   * @return the shared runtime
-   */
-  public static LuauRuntime getInstance() {
-    return INSTANCE;
-  }
 
   /**
    * Returns version information, loading and validating the native library first.
@@ -50,7 +39,7 @@ public final class LuauRuntime {
    * @return the library version, the Luau version, the native ABI version and the detected platform
    *     identifier
    */
-  public RuntimeInfo info() {
+  public static RuntimeInfo info() {
     return new RuntimeInfo(
         NativeBindings.runtimeVersion(),
         NativeBindings.luauVersion(),
@@ -65,7 +54,7 @@ public final class LuauRuntime {
    * @param source the Luau source text
    * @return the compilation result
    */
-  public CompilationResult compile(String source) {
+  public static CompilationResult compile(String source) {
     return compile("main", source);
   }
 
@@ -82,7 +71,7 @@ public final class LuauRuntime {
    *     source is not well-formed UTF-16 or exceeds the size limit
    * @throws NullPointerException if an argument is null
    */
-  public CompilationResult compile(String chunkName, String source) {
+  public static CompilationResult compile(String chunkName, String source) {
     ModuleNames.requireValid(chunkName);
     Objects.requireNonNull(source, "source");
     return compile(chunkName, Map.of(chunkName, source));
@@ -99,7 +88,7 @@ public final class LuauRuntime {
    *     together exceed 4 MiB, or the root module is not a key of {@code sources}
    * @throws NullPointerException if an argument, a key or a value is null
    */
-  public CompilationResult compile(String rootModuleName, Map<String, String> sources) {
+  public static CompilationResult compile(String rootModuleName, Map<String, String> sources) {
     return compile(rootModuleName, sources, List.of());
   }
 
@@ -121,7 +110,7 @@ public final class LuauRuntime {
    *     and a source module share a name, or the root module is not a key of {@code sources}
    * @throws NullPointerException if an argument, a key, a value or a list element is null
    */
-  public CompilationResult compile(
+  public static CompilationResult compile(
       String rootModuleName, Map<String, String> sources, List<HostModule> hostModules) {
     ModuleNames.requireValid(rootModuleName);
     Objects.requireNonNull(sources, "sources");

@@ -31,7 +31,6 @@ import java.util.Properties;
 import org.junit.jupiter.api.Test;
 
 class LuauRuntimeTest {
-  private final LuauRuntime runtime = LuauRuntime.getInstance();
 
   /** Reads the runtime version the packaging recorded for the staged native library. */
   private static String packagedRuntimeVersion() {
@@ -48,7 +47,7 @@ class LuauRuntimeTest {
 
   @Test
   void reportsMatchingRuntimeInformation() {
-    RuntimeInfo info = runtime.info();
+    RuntimeInfo info = LuauRuntime.info();
 
     assertEquals("0.748", info.luauVersion());
     assertEquals("3d91c9d5c280c95bfc4be63aac46012cf861d394", info.luauCommit());
@@ -62,7 +61,7 @@ class LuauRuntimeTest {
   @Test
   void compilesAndExecutesPrimitiveValues() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "模块😀",
             """
             return nil, true, 40 + 2, "你好，Luau"
@@ -85,7 +84,7 @@ class LuauRuntimeTest {
 
   @Test
   void returnsCompilationDiagnosticForInvalidSource() {
-    var compilation = runtime.compile("broken", "local =");
+    var compilation = LuauRuntime.compile("broken", "local =");
 
     assertFalse(compilation.successful());
     assertTrue(compilation.chunk().isEmpty());
@@ -101,7 +100,7 @@ class LuauRuntimeTest {
   @Test
   void reportsStructuredSourceRangeForTypeErrors() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "typed-location",
             """
             local value: number = 1
@@ -122,7 +121,7 @@ class LuauRuntimeTest {
   @Test
   void diagnosticMessagesDoNotEmbedSourceLocations() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "typed-message",
             """
             local count: number = "not a number"
@@ -149,7 +148,7 @@ class LuauRuntimeTest {
     }
     source.append("}\n");
 
-    var compilation = runtime.compile("compile-limit", source.toString());
+    var compilation = LuauRuntime.compile("compile-limit", source.toString());
 
     assertFalse(compilation.successful());
     CompilationDiagnostic diagnostic = compilation.diagnostics().get(0);
@@ -160,7 +159,7 @@ class LuauRuntimeTest {
   @Test
   void rejectsStrictTypeErrorsBeforeBytecodeCompilation() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "typed",
             """
             local count: number = "not a number"
@@ -175,7 +174,7 @@ class LuauRuntimeTest {
 
   @Test
   void returnsStructuredRuntimeFailure() {
-    var compilation = runtime.compile("failure", "error('预期错误😀')");
+    var compilation = LuauRuntime.compile("failure", "error('预期错误😀')");
     assertTrue(compilation.successful());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -187,7 +186,7 @@ class LuauRuntimeTest {
 
   @Test
   void sandboxDoesNotExposeProcessExecution() {
-    var compilation = runtime.compile("sandbox", "return (os :: any).execute");
+    var compilation = LuauRuntime.compile("sandbox", "return (os :: any).execute");
     assertTrue(compilation.successful());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -198,7 +197,7 @@ class LuauRuntimeTest {
 
   @Test
   void closedChunkCannotExecute() {
-    CompiledChunk chunk = runtime.compile("main", "return 1").chunk().orElseThrow();
+    CompiledChunk chunk = LuauRuntime.compile("main", "return 1").chunk().orElseThrow();
     chunk.close();
 
     assertThrows(IllegalStateException.class, chunk::execute);
@@ -207,7 +206,7 @@ class LuauRuntimeTest {
 
   @Test
   void stopsInfiniteLoopAtInterruptCheckLimit() {
-    var compilation = runtime.compile("interrupt-limit", "while true do end");
+    var compilation = LuauRuntime.compile("interrupt-limit", "while true do end");
     assertTrue(compilation.successful());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -222,7 +221,7 @@ class LuauRuntimeTest {
 
   @Test
   void stopsInfiniteLoopAtRuntimeLimit() {
-    var compilation = runtime.compile("runtime-limit", "while true do end");
+    var compilation = LuauRuntime.compile("runtime-limit", "while true do end");
     assertTrue(compilation.successful());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow()) {
@@ -238,7 +237,7 @@ class LuauRuntimeTest {
   @Test
   void stopsAllocationAtVmMemoryLimit() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "memory-limit",
             """
             local values = {}
@@ -261,7 +260,7 @@ class LuauRuntimeTest {
   @Test
   void persistentInstancesKeepStateWithoutSharingIt() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "persistent",
             """
             --!nocheck
@@ -287,7 +286,7 @@ class LuauRuntimeTest {
 
   @Test
   void failedPersistentInstanceBecomesFaulted() {
-    var compilation = runtime.compile("faulted", "error('boom')");
+    var compilation = LuauRuntime.compile("faulted", "error('boom')");
     assertTrue(compilation.successful());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();
@@ -310,7 +309,7 @@ class LuauRuntimeTest {
   @Test
   void initializesAndInvokesRootExports() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "exports",
             """
             local total = 0
@@ -364,7 +363,7 @@ class LuauRuntimeTest {
   @Test
   void roundTripsNestedSafeValuesThroughExportCalls() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "structured-values",
             """
             --!nocheck
@@ -465,7 +464,7 @@ class LuauRuntimeTest {
   @Test
   void reportsNestedReturnValueBudgetAsLimitExceeded() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "deep-value",
             """
             --!nocheck
@@ -497,7 +496,7 @@ class LuauRuntimeTest {
   @Test
   void reportsOversizedReturnBufferAsValueCodecLimit() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "large-return-value",
             """
             --!nocheck
@@ -522,7 +521,7 @@ class LuauRuntimeTest {
   @Test
   void rejectsOversizedJavaValuesBeforeEnteringTheVm() {
     var compilation =
-        runtime.compile(
+        LuauRuntime.compile(
             "input-limit",
             """
             --!nocheck
@@ -542,7 +541,7 @@ class LuauRuntimeTest {
 
   private void assertStructuredValueFailure(
       String chunkName, String source, String expectedMessage) {
-    var compilation = runtime.compile(chunkName, source);
+    var compilation = LuauRuntime.compile(chunkName, source);
     assertTrue(compilation.successful(), () -> compilation.diagnostics().toString());
 
     try (CompiledChunk chunk = compilation.chunk().orElseThrow();

@@ -36,8 +36,10 @@ require(releasePlatforms.isNotEmpty()) {
     "luau.releasePlatforms in gradle.properties is empty, so the universal JAR would carry no native."
 }
 
+// The in-game mod id stays `luau`; the artifact name carries the suffix so the library keeps the
+// plain name it publishes under.
 base {
-    archivesName = modId
+    archivesName = "${rootProject.name}-mod"
 }
 
 java {

@@ -19,7 +19,7 @@ Luau Runtime is a Minecraft mod library that lets other mods compile and run san
 
 ## Supported platforms
 
-A release produces one `luau-<version>-universal.jar` that contains every supported platform:
+A release produces one `luau-mod-<version>-universal.jar` that contains every supported platform:
 
 | Platform         | Native library      |
 | ---------------- | ------------------- |
@@ -101,7 +101,7 @@ The scope shares the time, interrupt-check, host-call and host-output limits acr
 
 ## Using it from another mod
 
-The build produces `luau-core`, a plain JVM library, and `luau`, the mod package that carries it. No Maven artifacts are published, so compile against the core JAR and declare a dependency on the `luau` mod for runtime.
+The build produces `luau`, a plain JVM library, and `luau-mod`, the mod package that carries it. No Maven artifacts are published, so compile against the library JAR and declare a dependency on the `luau` mod for runtime.
 
 `fabric.mod.json`:
 

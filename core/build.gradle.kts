@@ -9,7 +9,12 @@ plugins {
 group = providers.gradleProperty("mod.group").get()
 version = providers.gradleProperty("mod.version").get()
 
-val modId = providers.gradleProperty("mod.id").get()
+/**
+ * Name of the published library. The archive name and the Maven artifact id both come from here,
+ * so the JAR in `build/libs` and the one in a repository cannot drift apart.
+ */
+val artifactName = rootProject.name
+
 val luauVersion = providers.gradleProperty("luau.version").get()
 val luauCommit = providers.gradleProperty("luau.commit").get()
 val jniAbiVersion = providers.gradleProperty("luau.jniAbiVersion").get()
@@ -45,7 +50,7 @@ require(releasePlatforms.isNotEmpty()) {
 val nativeDirectory = rootProject.layout.projectDirectory.dir("native")
 
 base {
-    archivesName = "$modId-core"
+    archivesName = artifactName
 }
 
 java {
@@ -666,7 +671,7 @@ tasks.jar {
 
     manifest {
         attributes(
-            "Implementation-Title" to "Luau Runtime Core",
+            "Implementation-Title" to "Luau Runtime",
             "Implementation-Version" to version,
             "Luau-Version" to luauVersion,
             "Luau-Commit" to luauCommit,
@@ -679,9 +684,9 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            artifactId = "$modId-core"
+            artifactId = artifactName
             pom {
-                name.set("Luau Runtime Core")
+                name.set("Luau Runtime")
                 description.set(
                     "Sandboxed Luau runtime for the JVM, with the native library bundled for " +
                         "every supported platform.",

@@ -32,14 +32,14 @@ import org.junit.jupiter.api.Test;
 
 class LuauRuntimeTest {
 
-  /** Reads the runtime version the packaging recorded for the staged native library. */
-  private static String packagedRuntimeVersion() {
+  /** Reads what the packaging recorded about the build, so expectations come from the artifact. */
+  private static String packagedProperty(String key) {
     try (InputStream stream =
-        LuauRuntimeTest.class.getResourceAsStream("/META-INF/luau/natives/manifest.properties")) {
-      assertNotNull(stream, "the native manifest must be on the test classpath");
-      Properties manifest = new Properties();
-      manifest.load(stream);
-      return manifest.getProperty("runtimeVersion");
+        LuauRuntimeTest.class.getResourceAsStream("/META-INF/luau/runtime.properties")) {
+      assertNotNull(stream, "runtime.properties must be on the test classpath");
+      Properties properties = new Properties();
+      properties.load(stream);
+      return properties.getProperty(key);
     } catch (IOException exception) {
       throw new UncheckedIOException(exception);
     }
@@ -49,12 +49,12 @@ class LuauRuntimeTest {
   void reportsMatchingRuntimeInformation() {
     RuntimeInfo info = LuauRuntime.info();
 
-    assertEquals("0.748", info.luauVersion());
-    assertEquals("3d91c9d5c280c95bfc4be63aac46012cf861d394", info.luauCommit());
-    assertEquals(11, info.jniAbiVersion());
-    // The expected version comes from the packaged manifest instead of a literal: a hard coded
+    // Every expected value comes from the packaged properties instead of a literal: a hard coded
     // one breaks on every version bump and says nothing about the built native library.
-    assertEquals(packagedRuntimeVersion(), info.runtimeVersion());
+    assertEquals(packagedProperty("luauVersion"), info.luauVersion());
+    assertEquals(packagedProperty("luauCommit"), info.luauCommit());
+    assertEquals(packagedProperty("jniAbiVersion"), String.valueOf(info.jniAbiVersion()));
+    assertEquals(packagedProperty("runtimeVersion"), info.runtimeVersion());
     assertEquals(NativePlatform.current().id(), info.nativePlatform());
   }
 

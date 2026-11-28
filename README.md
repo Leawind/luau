@@ -4,13 +4,29 @@
 
 </div>
 
-# luau
+# Luau
 
-A sandboxed [Luau](https://luau.org/) runtime for the JVM. Java hosts compile Luau programs ahead of time, run them in isolated VMs, and expose Java code to them only through explicitly granted modules. Every invocation runs under explicit resource limits.
+A sandboxed [Luau](https://luau.org/) runtime for the JVM. Every invocation runs under explicit resource limits.
 
-The library targets Java 17 and has no dependencies. Native Luau libraries are bundled inside the JAR for every supported platform; nothing is downloaded at run time. It is also published as a Minecraft mod library for mods that would rather not bundle a native runtime; that packaging adds nothing to the API.
+It targets Java 17 and has no dependencies. Native Luau libraries are bundled inside the jar for every supported platform; nothing is downloaded at run time. It is also published as a Minecraft mod.
 
-## Quick start
+## Installation
+
+```kotlin
+repositories {
+    maven("https://api.modrinth.com/maven")
+}
+
+dependencies {
+    implementation("maven.modrinth:luau:<version>")
+}
+```
+
+`<version>` is a [release](https://github.com/Leawind/luau/releases) number. The jar carries the native library for Windows x86_64, Linux x86_64 and aarch64, and macOS x86_64 and aarch64; musl Linux, Windows ARM64 and Android are not supported.
+
+As a Minecraft mod, the same jar goes into the `mods` folder; Fabric, Forge and NeoForge are supported. A mod can require it by the mod id `luau` instead of bundling it.
+
+## Example
 
 ```java
 var compilation = LuauRuntime.compile("main", """
@@ -31,106 +47,9 @@ try (var chunk = compilation.chunk().orElseThrow();
 }
 ```
 
-The root module must return a table. `initialize()` runs its top-level code once and keeps that table; `invokeExport(name, arguments)` calls a function from it. Globals persist across calls and belong to one instance.
+The root module must return a table. `initialize()` runs its top-level code once and keeps that table; `invokeExport(name, arguments)` calls a function from it.
 
-Every invocation returns an `ExecutionResult`. `Completed` carries the returned values; the other variants report a Luau error, a limit, or a debugger stop. After a failure the instance is faulted and rejects every call until `reset()`.
-
-## Concepts
-
-**Modules.** A program is a set of Luau source modules compiled together; `require` resolves within that set and cannot reach outside it. Module caches are per instance.
-
-**Host modules.** Java code is reachable only through a `HostModule`, which carries a Luau type declaration that takes part in the type check, and a factory that creates its exports once per instance:
-
-```java
-HostModule counter = new HostModule("host/counter", "1",
-    """
-    return (nil :: any) :: {
-        next: () -> number,
-    }
-    """,
-    () -> Map.of("next", (HostFunction) (context, arguments) ->
-        List.of(new LuauNumber(next.incrementAndGet()))));
-
-var compilation = LuauRuntime.compile("main",
-    Map.of("main", """
-        local counter = require("host/counter")
-        return counter.next()
-        """),
-    List.of(counter));
-```
-
-Only the sealed `LuauValue` types cross the boundary. A `HostCallContext` passed to an invocation carries capabilities that its host functions can look up by type; nothing from the JVM reaches a script unless it is granted this way.
-
-**Limits.** Every invocation takes an `ExecutionBudget` of wall-clock time, interrupt checks, host calls and host output. Several calls that form one logical operation share an `ExecutionScope` so they draw from one budget.
-
-**Debugging.** Every instance has a `ScriptDebugger` with breakpoints by module and line, stepping, pause and resume. While paused, the instance rejects every other call.
-
-**Threading.** An instance belongs to the thread that created it and rejects calls from any other thread.
-
-Every type and member is documented in the javadoc that ships with the release.
-
-## Supported platforms
-
-A release produces one `luau-mod-<version>-universal.jar` that contains every supported platform:
-
-| Platform         | Native library      |
-| ---------------- | ------------------- |
-| `windows-x86_64` | `luau_jni.dll`      |
-| `linux-x86_64`   | `libluau_jni.so`    |
-| `linux-aarch64`  | `libluau_jni.so`    |
-| `macos-x86_64`   | `libluau_jni.dylib` |
-| `macos-aarch64`  | `libluau_jni.dylib` |
-
-musl Linux, Windows ARM64, and Android are not supported.
-
-## Using the library
-
-The library is published as `io.github.leawind:luau`. The JAR bundles the native library for the current platform; the `-universal` variant contains every supported platform and picks one at load time.
-
-## Using the mod
-
-Mods that already run inside a loader can depend on the `luau` mod instead of bundling the library. Declare a dependency on it in your loader metadata:
-
-`fabric.mod.json`:
-
-```json
-"depends": {
-  "luau": ">=0.1.0"
-}
-```
-
-`META-INF/mods.toml`:
-
-```toml
-[[dependencies.examplemod]]
-modId = "luau"
-mandatory = true
-versionRange = "[0.1.0,)"
-ordering = "NONE"
-side = "BOTH"
-```
-
-`META-INF/neoforge.mods.toml`:
-
-```toml
-[[dependencies.examplemod]]
-modId = "luau"
-type = "required"
-versionRange = "[0.1.0,)"
-ordering = "NONE"
-side = "BOTH"
-```
-
-## Build
-
-```bash
-git submodule update --init --recursive
-./gradlew build
-```
-
-`core` is the library: the Java API, the JNI binding, and the native build. `mod` wraps it into the loader-visible artifact. On Windows the native build requires Visual Studio Build Tools with the C++ workload. Building requires JDK 21 or newer; the produced classes target Java 17.
-
-A local build can cover every platform as well. `gh run download <run-id> --dir prebuilt-natives` fetches the five platform artifacts of one CI run, one directory per platform; with `LUAU_PREBUILT_NATIVES_DIR=prebuilt-natives`, `./gradlew build` also produces `mod/build/libs/*-universal.jar`. The prebuilt libraries have to come from the current native sources, and one built from other sources is rejected with its platform and both fingerprints.
+Scripts reach Java code only through a `HostModule` the host grants. Every type and member is documented in the javadoc that ships with the release.
 
 ## Third-party notices
 

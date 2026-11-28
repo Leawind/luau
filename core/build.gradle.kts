@@ -1,4 +1,5 @@
 import java.security.MessageDigest
+import org.gradle.external.javadoc.StandardJavadocDocletOptions
 
 plugins {
     `java-library`
@@ -57,6 +58,34 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
     withSourcesJar()
+    withJavadocJar()
+}
+
+/**
+ * The documented surface. Everything under `internal` is an implementation detail, so it stays out
+ * of the javadoc artifact even though it is reachable from the compiled classes.
+ */
+val documentedApiDirectory = layout.projectDirectory.dir(
+    "src/main/java/io/github/leawind/luau/v1/api",
+)
+
+tasks.javadoc {
+    source = fileTree(documentedApiDirectory) { include("**/*.java") }
+
+    options.encoding = "UTF-8"
+    // The doclet options are typed separately from the minimal ones the task exposes.
+    (options as StandardJavadocDocletOptions).apply {
+        charSet("UTF-8")
+        docEncoding("UTF-8")
+        // The Gradle module is `core`; the published library is the Luau runtime, so the page
+        // titles follow the artifact name instead of the module name.
+        title = "$artifactName ${project.version} API"
+        windowTitle = title
+        // Every group, so missing @param, @return or @throws entries on the public API fail the
+        // build instead of shipping quietly undocumented API.
+        addBooleanOption("Xdoclint:all", true)
+        addBooleanOption("Werror", true)
+    }
 }
 
 spotless {
